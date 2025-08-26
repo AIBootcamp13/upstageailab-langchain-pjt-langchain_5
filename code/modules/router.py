@@ -11,6 +11,8 @@
 
 import os
 from typing import Dict, Any, Optional
+from datetime import datetime
+import pytz
 from langchain_upstage import ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -39,6 +41,10 @@ class QueryRouter:
         if not self.api_key:
             raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
         
+        # 현재 시간 설정 (한국 시간)
+        tz = pytz.timezone("Asia/Seoul")
+        self.current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+        
         # 라우팅용 경량 모델 초기화 (reasoning_effort 제외)
         self.router_llm = ChatUpstage(
             api_key=self.api_key,
@@ -50,10 +56,18 @@ class QueryRouter:
         self.classification_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a helpful AI assistant that can answer general questions directly.
 However, for specialized bakery and pastry technical questions, you need to access a knowledge base.
+The current time is {current_time}.
 
 YOUR TASK:
 1. If the question is general (greetings, weather, programming, etc.) - ANSWER DIRECTLY in Korean
 2. If the question requires specialized bakery/pastry knowledge - RESPOND WITH EXACTLY: "BAKERY-RAG"
+
+IMPORTANT RULES FOR BAKERY-RAG:
+- Output ONLY the text "BAKERY-RAG" - nothing else
+- Do NOT include "BAKERY-RAG" in a sentence or explanation
+- Do NOT say "This needs BAKERY-RAG" or similar phrases
+- Do NOT add periods, explanations, or additional text
+- Just output: BAKERY-RAG
 
 BAKERY-RAG is needed for:
 - Technical baking questions (recipes, techniques, troubleshooting)
@@ -111,20 +125,53 @@ A: 감사합니다! 좋은 하루 되세요!"""),
         """
         try:
             # 프롬프트 포맷팅
-            messages = self.classification_prompt.format_messages(question=question)
+            messages = self.classification_prompt.format_messages(
+                question=question,
+                current_time=self.current_time
+            )
             
             # LLM 호출
             response = self.router_llm.invoke(messages)
             response_text = response.content.strip()
             
-            # BAKERY-RAG 신호 체크
-            if response_text == "BAKERY-RAG":
+            # BAKERY-RAG 신호 체크 (여러 패턴 지원)
+            response_clean = response_text.strip()
+            
+            # 1. 정확한 일치 (가장 명확한 경우)
+            if response_clean == "BAKERY-RAG" or response_clean == "BAKERY-RAG.":
+                self.logger.log_step("RAG 라우팅", "명확한 BAKERY-RAG 신호 감지")
                 return {
-                    "response": response_text,
+                    "response": None,
                     "is_bakery_rag": True
                 }
+            
+            # 2. 시작 패턴 (LLM이 추가 설명을 붙인 경우)
+            elif response_clean.startswith("BAKERY-RAG"):
+                self.logger.log_warning("RAG 라우팅", f"BAKERY-RAG로 시작하는 응답: {response_text[:50]}...")
+                return {
+                    "response": None,
+                    "is_bakery_rag": True
+                }
+            
+            # 3. 처음 몇 단어에 포함 (실수로 앞에 나온 경우)
+            elif "BAKERY-RAG" in response_text.split()[:3]:
+                self.logger.log_warning("RAG 라우팅", f"처음 3단어에 BAKERY-RAG 포함: {response_text[:50]}...")
+                return {
+                    "response": None,
+                    "is_bakery_rag": True
+                }
+            
+            # 4. 응답에 포함되어 있지만 일반 답변으로 보이는 경우 (마지막 수단)
+            elif "BAKERY-RAG" in response_text:
+                self.logger.log_warning("RAG 라우팅", f"응답 중간에 BAKERY-RAG 포함, RAG로 라우팅: {response_text[:100]}...")
+                return {
+                    "response": None,
+                    "is_bakery_rag": True
+                }
+            
             else:
-                # 직접 답변
+                # 완전한 일반 답변
+                self.logger.log_step("일반 답변", f"직접 응답 생성: {response_text[:50]}...")
                 return {
                     "response": response_text,
                     "is_bakery_rag": False
