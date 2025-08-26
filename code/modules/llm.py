@@ -57,15 +57,37 @@ class LLMManager:
         
         self.logger.log_success("LLM Manager 초기화 완료")
     
+    def _is_reasoning_model(self, model: str) -> bool:
+        """
+        모델이 reasoning 기능을 지원하는지 확인
+        
+        Args:
+            model (str): 모델명
+            
+        Returns:
+            bool: reasoning 모델 여부
+        """
+        reasoning_models = ["solar-pro", "solar-1-pro"]
+        return any(rm in model.lower() for rm in reasoning_models)
+    
     def _init_llm(self):
         """LLM 모델 초기화"""
         try:
-            self.llm = ChatUpstage(
-                api_key=self.api_key,
-                model=self.model,
-                reasoning_effort=self.reasoning_effort,
-                temperature=self.temperature
-            )
+            # 기본 파라미터 설정
+            params = {
+                "api_key": self.api_key,
+                "model": self.model,
+                "temperature": self.temperature
+            }
+            
+            # reasoning 모델인 경우에만 reasoning_effort 추가
+            if self._is_reasoning_model(self.model):
+                params["reasoning_effort"] = self.reasoning_effort
+                self.logger.log_step("Reasoning 모델 감지", f"reasoning_effort: {self.reasoning_effort}")
+            else:
+                self.logger.log_step("일반 모델 감지", "reasoning_effort 파라미터 제외")
+            
+            self.llm = ChatUpstage(**params)
             self.logger.log_step("LLM 모델 초기화", f"모델: {self.model}")
         except Exception as e:
             self.logger.log_error("LLM 초기화", e)
