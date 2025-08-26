@@ -21,28 +21,6 @@ from .logger import LoggerManager
 class QueryRouter:
     """질문 라우팅 클래스"""
     
-    # 제빵/제과 관련 키워드
-    BAKERY_KEYWORDS = [
-        # 제빵 관련
-        "빵", "제빵", "베이킹", "반죽", "발효", "굽기", "오븐",
-        "이스트", "효모", "글루텐", "밀가루", "버터", "계란",
-        "바게트", "크로와상", "식빵", "단팥빵", "소보로", "모카빵",
-        "도우", "믹싱", "니딩", "프루핑", "벤치타임", "성형",
-        
-        # 제과 관련
-        "제과", "케이크", "쿠키", "마카롱", "타르트", "파이",
-        "초콜릿", "생크림", "커스터드", "머랭", "슈크림",
-        "스펀지", "시폰", "무스", "가나슈", "버터크림",
-        
-        # 재료 및 도구
-        "박력분", "중력분", "강력분", "베이킹파우더", "베이킹소다",
-        "바닐라", "코코아", "시나몬", "설탕", "소금",
-        "믹서기", "반죽기", "오븐", "발효기", "온도계",
-        
-        # 기능사 관련
-        "기능사", "실기", "시험", "자격증", "제과기능사", "제빵기능사"
-    ]
-    
     def __init__(self, 
                  api_key: str = None,
                  router_model: str = "upstage/solar-1-mini-chat",
@@ -68,61 +46,68 @@ class QueryRouter:
             temperature=temperature
         )
         
-        # 분류 프롬프트 템플릿
+        # 답변 생성 및 라우팅 프롬프트 템플릿
         self.classification_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a query classifier for a bakery assistant system.
-Your task is to determine if a user question is related to baking/bakery topics.
+            ("system", """You are a helpful AI assistant that can answer general questions directly.
+However, for specialized bakery and pastry technical questions, you need to access a knowledge base.
 
-Bakery-related topics include:
-- Bread making, baking techniques, recipes
-- Pastry, cakes, cookies, desserts
-- Baking ingredients (flour, yeast, butter, etc.)
-- Baking equipment and tools
-- Baking certifications and exams
-- Any questions about the bakery documents in the system
+YOUR TASK:
+1. If the question is general (greetings, weather, programming, etc.) - ANSWER DIRECTLY in Korean
+2. If the question requires specialized bakery/pastry knowledge - RESPOND WITH EXACTLY: "BAKERY-RAG"
 
-Reply with ONLY one word:
-- "BAKERY" if the question is related to baking/bakery
-- "GENERAL" if the question is not related to baking/bakery
+BAKERY-RAG is needed for:
+- Technical baking questions (recipes, techniques, troubleshooting)
+- Baking ingredients and their functions  
+- Professional bakery equipment and processes
+- Bakery certifications and exams
+- Food science related to baking
+- Specific baking problem solving
+
+ANSWER DIRECTLY for:
+- General greetings and conversation
+- Non-baking topics (weather, news, programming, etc.)
+- Simple opinions about food
+- Business questions (locations, hours, prices)
+- General life advice
 
 Examples:
-Q: "How to make croissant dough?" -> BAKERY
-Q: "What's the weather today?" -> GENERAL
-Q: "Tell me about fermentation process" -> BAKERY
-Q: "Who is the president?" -> GENERAL"""),
+Q: "안녕하세요"
+A: 안녕하세요! 무엇을 도와드릴까요?
+
+Q: "오늘 날씨 어때?"
+A: 죄송하지만 실시간 날씨 정보는 제공할 수 없습니다. 날씨 앱이나 웹사이트를 확인해보시는 것을 추천드립니다.
+
+Q: "크로와상 반죽이 왜 층이 안 생기죠?"
+A: BAKERY-RAG
+
+Q: "파이썬 배우고 싶어요"
+A: 파이썬은 배우기 쉽고 강력한 프로그래밍 언어입니다. 온라인 강의나 공식 튜토리얼부터 시작하시는 것을 추천드립니다.
+
+Q: "빵이 맛있어 보이네요"
+A: 맛있어 보이는 빵을 발견하셨군요! 좋은 빵을 즐기시길 바랍니다.
+
+Q: "이스트와 베이킹파우더 차이점이 뭐예요?"
+A: BAKERY-RAG
+
+Q: "좋은 하루 되세요"
+A: 감사합니다! 좋은 하루 되세요!"""),
             ("human", "{question}")
         ])
         
         self.logger.log_success("Query Router 초기화 완료")
     
-    def check_keywords(self, question: str) -> bool:
+    def get_response_or_route(self, question: str) -> Dict[str, Any]:
         """
-        키워드 기반 사전 필터링
+        질문에 대해 직접 답변하거나 RAG 라우팅 신호를 반환
         
         Args:
             question: 사용자 질문
             
         Returns:
-            bool: 제빵 관련 키워드 포함 여부
-        """
-        question_lower = question.lower()
-        
-        for keyword in self.BAKERY_KEYWORDS:
-            if keyword.lower() in question_lower:
-                self.logger.log_step("키워드 매칭", f"발견된 키워드: {keyword}")
-                return True
-        
-        return False
-    
-    def classify_with_llm(self, question: str) -> str:
-        """
-        LLM을 사용한 정밀 분류
-        
-        Args:
-            question: 사용자 질문
-            
-        Returns:
-            str: "BAKERY" 또는 "GENERAL"
+            Dict: {
+                "response": str (직접 답변 또는 "BAKERY-RAG"),
+                "is_bakery_rag": bool (RAG 필요 여부)
+            }
         """
         try:
             # 프롬프트 포맷팅
@@ -130,24 +115,32 @@ Q: "Who is the president?" -> GENERAL"""),
             
             # LLM 호출
             response = self.router_llm.invoke(messages)
-            classification = response.content.strip().upper()
+            response_text = response.content.strip()
             
-            # 유효성 검사
-            if classification not in ["BAKERY", "GENERAL"]:
-                self.logger.log_warning("예상치 못한 분류 결과", classification)
-                # 키워드 체크로 폴백
-                return "BAKERY" if self.check_keywords(question) else "GENERAL"
-            
-            return classification
+            # BAKERY-RAG 신호 체크
+            if response_text == "BAKERY-RAG":
+                return {
+                    "response": response_text,
+                    "is_bakery_rag": True
+                }
+            else:
+                # 직접 답변
+                return {
+                    "response": response_text,
+                    "is_bakery_rag": False
+                }
             
         except Exception as e:
-            self.logger.log_error("LLM 분류 오류", e)
-            # 에러 시 키워드 체크로 폴백
-            return "BAKERY" if self.check_keywords(question) else "GENERAL"
+            self.logger.log_error("LLM 라우팅 오류", e)
+            # 에러 시 일반 응답으로 폴백
+            return {
+                "response": "죄송합니다. 현재 응답을 처리하는 중 문제가 발생했습니다. 다시 시도해주세요.",
+                "is_bakery_rag": False
+            }
     
     def route(self, question: str) -> Dict[str, Any]:
         """
-        질문 라우팅 수행
+        질문 라우팅 수행 (호환성을 위해 유지)
         
         Args:
             question: 사용자 질문
@@ -156,46 +149,34 @@ Q: "Who is the president?" -> GENERAL"""),
             Dict: {
                 "type": "BAKERY" or "GENERAL",
                 "use_rag": bool,
-                "model": str (추천 모델),
-                "confidence": float (0-1)
+                "response": str or None,
+                "model": str (사용된 모델)
             }
         """
         self.logger.log_function_start("route", question=question[:50] + "..." if len(question) > 50 else question)
         
-        # 1단계: 키워드 체크 (빠른 필터링)
-        has_keywords = self.check_keywords(question)
+        # 새로운 방식으로 라우팅
+        result = self.get_response_or_route(question)
         
-        # 2단계: LLM 분류 (정밀 분석)
-        llm_classification = self.classify_with_llm(question)
-        
-        # 3단계: 최종 결정
-        if has_keywords and llm_classification == "BAKERY":
-            # 높은 신뢰도로 제빵 관련
-            result = {
+        if result["is_bakery_rag"]:
+            # RAG가 필요한 제빵 관련 질문
+            route_result = {
                 "type": "BAKERY",
                 "use_rag": True,
-                "model": "solar-pro2",
-                "confidence": 0.95
-            }
-        elif has_keywords or llm_classification == "BAKERY":
-            # 중간 신뢰도로 제빵 관련
-            result = {
-                "type": "BAKERY", 
-                "use_rag": True,
-                "model": "solar-pro2",
-                "confidence": 0.7
+                "response": None,  # RAG에서 생성할 예정
+                "model": "solar-pro2"
             }
         else:
-            # 일반 질문
-            result = {
+            # 직접 답변 가능한 일반 질문
+            route_result = {
                 "type": "GENERAL",
                 "use_rag": False,
-                "model": "upstage/solar-1-mini-chat",
-                "confidence": 0.9
+                "response": result["response"],  # 이미 생성된 답변
+                "model": "upstage/solar-1-mini-chat"
             }
         
-        self.logger.log_function_end("route", f"분류 결과: {result['type']} (신뢰도: {result['confidence']})")
-        return result
+        self.logger.log_function_end("route", f"분류 결과: {route_result['type']} (응답: {'생성됨' if route_result['response'] else 'RAG 필요'})")
+        return route_result
     
     def explain_route(self, question: str) -> str:
         """
@@ -210,6 +191,6 @@ Q: "Who is the president?" -> GENERAL"""),
         result = self.route(question)
         
         if result["type"] == "BAKERY":
-            return f"제빵 관련 질문으로 분류되었습니다. (신뢰도: {result['confidence']*100:.0f}%) RAG 시스템을 사용하여 문서에서 정보를 검색합니다."
+            return f"제빵 전문 지식이 필요한 질문으로 판단되어 RAG 시스템을 사용합니다. 모델: {result['model']}"
         else:
-            return f"일반 질문으로 분류되었습니다. (신뢰도: {result['confidence']*100:.0f}%) 일반 대화 모델로 응답합니다."
+            return f"일반 질문으로 판단되어 직접 답변을 생성했습니다. 모델: {result['model']}"

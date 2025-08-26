@@ -583,31 +583,8 @@ def render_chat_interface(llm_manager, retriever_manager, router):
                     st.session_state.chat_history_manager.add_ai_message(response, user_input, sources)
                     
                 else:
-                    # 일반 질문 - 직접 LLM 응답
-                    # 라우팅용 경량 모델로 설정 변경
-                    original_model = llm_manager.model
-                    llm_manager.update_model_settings(model="upstage/solar-1-mini-chat")
-                    
-                    # 채팅 히스토리 가져오기
-                    chat_history = st.session_state.chat_history_manager.get_chat_history_as_dicts()
-                    
-                    # 일반 질문용 프롬프트 생성
-                    general_prompt = llm_manager.create_custom_prompt(
-                        system_message="You are a helpful assistant. Answer in Korean. Be concise and helpful.",
-                        include_context=False,
-                        include_history=True
-                    )
-                    
-                    # LLM 응답 생성 (컨텍스트 없이)
-                    response = llm_manager.generate_response(
-                        question=user_input,
-                        context="",
-                        chat_history=chat_history,
-                        prompt_template=general_prompt
-                    )
-                    
-                    # 모델 설정 복원
-                    llm_manager.update_model_settings(model=original_model)
+                    # 일반 질문 - 라우터가 이미 생성한 답변 사용
+                    response = routing_result["response"]
                     
                     # AI 메시지 추가 (소스 정보 없이)
                     st.session_state.chat_history_manager.add_ai_message(response, user_input, [])
