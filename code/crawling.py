@@ -1,150 +1,158 @@
-# -*- coding: utf-8 -*-
-"""
-Q-net 단일 파일 다운로드 → ZIP이면 내부 PDF만 추출
-- ZIP 내부 한글 파일명(인코딩 깨짐) 복구: CP437→CP949(EUC-KR) 재디코딩
-- '병합/합본/통합/merge' 포함 PDF는 제외
-- 간단한 PDF 시그니처(%PDF-) 검사
-- 저장 경로/결과 목록 출력
-
-사용법:
-    uv add requests
-    uv run download_qnet_single.py
-"""
-
-import os
-import io
-import re
-import zipfile
-from pathlib import Path
 import requests
+import re
+import os
+import zipfile
+import shutil
 
-# ===== 필요한 곳만 바꾸세요 =====
-URL = (
-    "https://www.q-net.or.kr/crf011.do?id=crf01106&gSite=Q&gId=&filePath=bbs/Q006/Q006_2220028"
-    "&fileName=%EC%A0%9C%EB%B9%B5%EA%B8%B0%EB%8A%A5%EC%82%AC%20%EA%B3%BC%EC%A0%9C(pdf).zip"
-)
-REFERER = "https://www.q-net.or.kr/crf005.do?id=crf00503&jmCd=7892"
-SAVE_DIR = Path("../data/pdf")
-TIMEOUT = 30
-# ==============================
+# ───────── 인코딩 유틸 ─────────
+def pick_best_latin1_roundtrip(raw: str) -> str:
+    b = raw.encode("latin-1", errors="ignore")
+    for enc in ("utf-8", "cp949", "ms949", "euc-kr"):
+        try:
+            return b.decode(enc)
+        except Exception:
+            continue
+    return raw
 
-MERGE_PAT = re.compile(r"(병합|합본|통합|merge)", re.IGNORECASE)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Referer": REFERER,  # 일부 서버는 Referer를 확인함
-}
-
-
-def is_pdf_bytes(b: bytes) -> bool:
-    # 간단한 PDF 시그니처 체크
-    return b.startswith(b"%PDF-")
-
-
-def safe_filename(name: str) -> str:
-    # 파일명에 쓸 수 없는 문자 제거
-    name = name.strip().replace("\n", " ").replace("\r", " ")
-    return re.sub(r'[\\/:*?"<>|]+', "_", name) or "file.pdf"
-
-
-def ensure_unique_path(path: Path) -> Path:
-    # 같은 이름이 있으면 (1), (2) … 를 붙여 충돌 방지
-    if not path.exists():
-        return path
-    stem, suffix = path.stem, path.suffix
-    i = 1
-    while True:
-        cand = path.with_name(f"{stem} ({i}){suffix}")
-        if not cand.exists():
-            return cand
-        i += 1
-
-
-def _fix_korean_name(name: str) -> str:
+def fix_zip_internal_name(name: str) -> str:
     """
-    ZIP이 UTF-8 플래그 없이 저장된 경우, zipfile이 CP437로 해석한 문자열을
-    다시 바이트로 되돌렸다가 CP949(=EUC-KR) 등으로 재해석해 한글 복구.
+    zipfile이 cp437로 잘못 해석한 내부 파일명을 복구.
+    - UTF-8 플래그가 설정된 항목이면 그대로 사용
+    - 그 외에는 "보이는 문자열"을 cp437로 다시 bytes화 후 한글 인코딩 후보로 재해석
     """
+    # zipfile은 filename을 이미 str로 줍니다. UTF-8로 온 경우엔 보통 멀쩡.
+    # 그래도 안전하게 cp437 round-trip 시도
     try:
-        return name.encode("cp437").decode("cp949")
-    except Exception:
-        for enc in ("euc-kr", "ms949", "utf-8"):
+        raw = name.encode("cp437", errors="ignore")
+        for enc in ("cp949", "ms949", "euc-kr", "utf-8"):
             try:
-                return name.encode("cp437").decode(enc)
+                return raw.decode(enc)
             except Exception:
                 pass
-    return name  # 못 고치면 원본 반환
+    except Exception:
+        pass
+    return name
 
+# ───────── 다운로드 ─────────
+def download_file_with_fixed_filename(url: str, session=None, dest_folder="downloads"):
+    if session is None:
+        session = requests.Session()
 
-def extract_pdfs_from_zip(zip_bytes: bytes, out_dir: Path) -> list[Path]:
+    resp = session.get(url, stream=True)
+    resp.raise_for_status()
+
+    cd = resp.headers.get("content-disposition", "")
+    filename = None
+
+    m = re.search(r'filename\*?=([^;]+)', cd, flags=re.IGNORECASE)
+    if m:
+        raw = m.group(1).strip().strip('"')
+        filename = pick_best_latin1_roundtrip(raw)
+    else:
+        filename = os.path.basename(url.split("?", 1)[0])
+
+    os.makedirs(dest_folder, exist_ok=True)
+    path = os.path.join(dest_folder, filename)
+
+    with open(path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    print(f"Downloaded: {path}")
+    return path
+
+# ───────── 압축 해제(파일명 복구) ─────────
+def unzip_in_place_with_name_fix(folder: str, delete_zip: bool = False):
     """
-    ZIP 바이트에서 PDF만 추출(하위 폴더 구조 무시, 파일명만)
-    - 한글 파일명 복구
-    - '병합/합본/통합/merge' 포함 PDF 제외
-    - PDF 시그니처 확인
+    folder 안의 zip을 각각 같은 폴더에 풀되,
+    내부 파일/폴더명 한글 깨짐을 복구해서 저장.
+    상위 이동/폴더 삭제 없음.
     """
-    saved = []
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for zi in zf.infolist():
-            if zi.is_dir():
-                continue
+    for name in os.listdir(folder):
+        if not name.lower().endswith(".zip"):
+            continue
 
-            raw_name = os.path.basename(zi.filename)
-            name = _fix_korean_name(raw_name)
+        zip_path = os.path.join(folder, name)
+        extract_root = os.path.join(folder, os.path.splitext(name)[0])
+        os.makedirs(extract_root, exist_ok=True)
 
-            if not name.lower().endswith(".pdf"):
-                continue
-            if MERGE_PAT.search(name):
-                print(f"[SKIP] 병합/합본 PDF 제외: {name}")
-                continue
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for info in zf.infolist():
+                # 원래 상대경로(슬래시 포함) 복구
+                fixed_rel = fix_zip_internal_name(info.filename).replace("\\", "/")
+                target_path = os.path.join(extract_root, fixed_rel)
 
-            data = zf.read(zi)
-            if not is_pdf_bytes(data):
-                print(f"[SKIP] PDF 서명 아님: {name}")
-                continue
+                if info.is_dir() or fixed_rel.endswith("/"):
+                    os.makedirs(target_path, exist_ok=True)
+                    continue
 
-            out = ensure_unique_path(out_dir / safe_filename(name))
-            out_dir.mkdir(parents=True, exist_ok=True)
-            with open(out, "wb") as f:
-                f.write(data)
-            print(f"[OK] 저장: {out.name}")
-            saved.append(out)
-    return saved
+                # merged.pdf는 제외
+                if os.path.basename(fixed_rel).lower() == "merged.pdf":
+                    print(f"Skipped merged.pdf: {fixed_rel}")
+                    continue
 
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with zf.open(info) as src, open(target_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
 
-def main():
-    SAVE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[PATH] 저장 폴더: {SAVE_DIR.resolve()}")
-    print(f"[GET] {URL}")
+                print(f"Extracted: {fixed_rel}")
 
-    r = requests.get(URL, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
-    content = r.content
+        if delete_zip:
+            try:
+                os.remove(zip_path)
+                print(f"Deleted zip: {zip_path}")
+            except Exception as e:
+                print(f"Failed to delete zip ({zip_path}): {e}")
 
-    # 확장자와 관계없이 ZIP 시도 → 실패하면 PDF 단일 파일로 간주
-    saved = []
-    try:
-        saved = extract_pdfs_from_zip(content, SAVE_DIR)
-        if saved:
-            print(f"[DONE] ZIP에서 PDF {len(saved)}개 추출 완료.")
-        else:
-            print("[INFO] ZIP 내부에 저장할 PDF가 없거나 모두 제외됨.")
-    except zipfile.BadZipFile:
-        # ZIP이 아니면 단일 PDF일 수 있음 → 바로 저장 시도
-        if is_pdf_bytes(content):
-            out = ensure_unique_path(SAVE_DIR / "downloaded.pdf")
-            with open(out, "wb") as f:
-                f.write(content)
-            print(f"[OK] 단일 PDF 저장: {out.name}")
-            saved = [out]
-        else:
-            print("[FAIL] ZIP도 아니고 PDF도 아닌 응답입니다(확장자/응답 헤더 확인 필요).")
+# ───────── 이미 풀어둔 폴더의 파일명 사후 복구(선택) ─────────
+def rename_mojibake_in_dir(root_dir: str):
+    """
+    이미 풀어둔 폴더에서 깨진 파일/폴더명을 cp437→(cp949/ms949/euc-kr/utf-8) 복구로 재명명.
+    """
+    for cur_root, dirs, files in os.walk(root_dir, topdown=False):
+        # 파일
+        for fn in files:
+            fixed = fix_zip_internal_name(fn)
+            if fixed != fn:
+                src = os.path.join(cur_root, fn)
+                dst = os.path.join(cur_root, fixed)
+                if not os.path.exists(dst):
+                    os.rename(src, dst)
+                    print(f"Renamed file: {fn} -> {fixed}")
 
-    if saved:
-        print("[LIST]")
-        for p in saved:
-            print(" -", p.resolve())
-
+        # 디렉터리
+        for dn in dirs:
+            fixed = fix_zip_internal_name(dn)
+            if fixed != dn:
+                src = os.path.join(cur_root, dn)
+                dst = os.path.join(cur_root, fixed)
+                if not os.path.exists(dst):
+                    os.rename(src, dst)
+                    print(f"Renamed dir: {dn} -> {fixed}")
 
 if __name__ == "__main__":
-    main()
+    # 스크립트의 디렉토리로 작업 디렉토리 변경
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+
+    urls = [
+        "https://www.q-net.or.kr/crf011.do?id=crf01106&gSite=Q&gId=&filePath=bbs/Q006/Q006_2220026&fileName=제과제빵기능사 실기시험 변경현황(2025년 적용).pdf",
+        "https://www.q-net.or.kr/crf011.do?id=crf01106&gSite=Q&gId=&filePath=bbs/Q006/Q006_2220027&fileName=제과기능사 과제(pdf).zip",
+        "https://www.q-net.or.kr/crf011.do?id=crf01106&gSite=Q&gId=&filePath=bbs/Q006/Q006_2220028&fileName=제빵기능사 과제(pdf).zip",
+        "https://www.q-net.or.kr/crf011.do?id=crf01106&gSite=Q&gId=&filePath=bbs/Q006/Q006_2208612&fileName=2024년도 실기시험 변경 내역(제과기능사 제빵기능사).pdf",
+    ]
+
+    target_folder = "../data/pdf"
+
+    # 1) 다운로드
+    for url in urls:
+        download_file_with_fixed_filename(url, dest_folder=target_folder)
+
+    # 2) 해당 폴더 안 zip만 해제 (내부 파일명 복구 포함)
+    unzip_in_place_with_name_fix(folder=target_folder, delete_zip=True)
+
+    # 3) 이미 풀어둔 폴더에서 이름이 깨져있다면(과거 작업물) 아래 한 줄로 복구 가능
+    # rename_mojibake_in_dir(os.path.join(target_folder, "제과기능사 과제(pdf)"))
+    # rename_mojibake_in_dir(os.path.join(target_folder, "제빵기능사 과제(pdf)"))
