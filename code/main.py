@@ -588,8 +588,8 @@ def render_chat_interface(llm_manager, retriever_manager, router):
                     # 채팅 히스토리 가져오기
                     chat_history = st.session_state.chat_history_manager.get_chat_history_as_dicts()
                     
-                    # LLM 응답 생성 (solar-pro2 모델 사용)
-                    response = llm_manager.generate_response(
+                    # RAG용 LLM 응답 생성
+                    response = llm_manager.generate_rag_response(
                         question=user_input,
                         context=context,
                         chat_history=chat_history
@@ -602,8 +602,15 @@ def render_chat_interface(llm_manager, retriever_manager, router):
                     st.session_state.chat_history_manager.add_ai_message(response, user_input, sources)
                     
                 else:
-                    # 일반 질문 - 라우터가 이미 생성한 답변 사용
-                    response = routing_result["response"]
+                    # 일반 질문 - 일반답변용 LLM 사용
+                    # 채팅 히스토리 가져오기
+                    chat_history = st.session_state.chat_history_manager.get_chat_history_as_dicts()
+                    
+                    # 일반답변용 LLM 응답 생성
+                    response = llm_manager.generate_general_response(
+                        question=user_input,
+                        chat_history=chat_history
+                    )
                     
                     # AI 메시지 추가 (소스 정보 없이)
                     st.session_state.chat_history_manager.add_ai_message(response, user_input, [])

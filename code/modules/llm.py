@@ -4,7 +4,7 @@ LLM API 호출 및 응답 처리 모듈
 이 모듈은 LangChain을 통해 LLM API를 호출하고 응답을 처리하는 기능을 제공합니다.
 
 주요 기능:
-1. LLM 모델 초기화 및 설정
+1. LLM 모델 초기화 및 설정 (router, general, rag 분리)
 2. 프롬프트 템플릿 관리
 3. API 호출 및 응답 처리
 4. 스트리밍 응답 지원
@@ -47,86 +47,87 @@ class LLMManager:
         self.logger = LoggerManager("LLM")
         self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
         
+        if not self.api_key:
+            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
+        
         # 설정 로드
         if use_config:
             try:
                 config_loader = get_config_loader()
                 llm_config = config_loader.get_llm_config()
                 
-                self.model = llm_config.get("model", model or "solar-pro2")
-                self.temperature = llm_config.get("temperature", temperature or 0.7)
+                # 새로운 설정 구조 사용
+                self.router_model = llm_config.get("router", {}).get("model", "solar-pro2")
+                self.router_temperature = llm_config.get("router", {}).get("temperature", 0.1)
                 
-                # solar-pro2 모델인 경우에만 reasoning_effort 설정
-                if "solar-pro2" in self.model.lower():
-                    self.reasoning_effort = llm_config.get("reasoning_effort", reasoning_effort or "high")
-                else:
-                    self.reasoning_effort = None
+                self.general_model = llm_config.get("general", {}).get("model", "solar-pro2")
+                self.general_temperature = llm_config.get("general", {}).get("temperature", 0.7)
+                
+                self.rag_model = llm_config.get("rag", {}).get("model", "solar-pro2")
+                self.rag_temperature = llm_config.get("rag", {}).get("temperature", 0.7)
+                self.rag_reasoning_effort = llm_config.get("rag", {}).get("reasoning_effort", "high")
                 
                 self.logger.log_step("Config 기반 LLM 설정", 
-                                   f"모델: {self.model}, reasoning: {self.reasoning_effort}")
+                                   f"Router: {self.router_model}, General: {self.general_model}, RAG: {self.rag_model}")
             except Exception as e:
                 self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
-                self.model = model or "solar-pro2"
-                self.reasoning_effort = reasoning_effort or "high" if "solar-pro2" in (model or "solar-pro2") else None
-                self.temperature = temperature or 0.7
+                self._set_default_config()
         else:
-            self.model = model or "solar-pro2"
-            self.reasoning_effort = reasoning_effort or "high" if "solar-pro2" in (model or "solar-pro2") else None
-            self.temperature = temperature or 0.7
+            self._set_default_config()
         
-        if not self.api_key:
-            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
-        
-        # LLM 초기화
-        self._init_llm()
+        # 각 용도별 LLM 초기화
+        self._init_llms()
         
         # 프롬프트 로더 초기화
         self.prompt_loader = get_prompt_loader()
         
-        # 기본 프롬프트 템플릿 설정
-        self._init_default_prompt()
-        
         self.logger.log_success("LLM Manager 초기화 완료")
     
-    def _is_reasoning_model(self, model: str) -> bool:
-        """
-        모델이 reasoning 기능을 지원하는지 확인
-        
-        Args:
-            model (str): 모델명
-            
-        Returns:
-            bool: reasoning 모델 여부
-        """
-        reasoning_models = ["solar-pro", "solar-1-pro"]
-        return any(rm in model.lower() for rm in reasoning_models)
+    def _set_default_config(self):
+        """기본 설정값 설정"""
+        self.router_model = "solar-pro2"
+        self.router_temperature = 0.1
+        self.general_model = "solar-pro2"
+        self.general_temperature = 0.7
+        self.rag_model = "solar-pro2"
+        self.rag_temperature = 0.7
+        self.rag_reasoning_effort = "high"
     
-    def _init_llm(self):
-        """LLM 모델 초기화"""
+    def _init_llms(self):
+        """각 용도별 LLM 모델 초기화"""
         try:
-            # 기본 파라미터 설정
-            params = {
+            # 라우터용 LLM
+            router_params = {
                 "api_key": self.api_key,
-                "model": self.model,
-                "temperature": self.temperature
+                "model": self.router_model,
+                "temperature": self.router_temperature
             }
+            self.router_llm = ChatUpstage(**router_params)
             
-            # solar-pro2 모델이고 reasoning_effort가 설정된 경우에만 추가
-            if self.reasoning_effort is not None and "solar-pro2" in self.model.lower():
-                params["reasoning_effort"] = self.reasoning_effort
-                self.logger.log_step("Solar-Pro2 모델 감지", f"reasoning_effort: {self.reasoning_effort}")
-            else:
-                self.logger.log_step("일반 모델 또는 reasoning_effort 미설정", "reasoning_effort 파라미터 제외")
+            # 일반답변용 LLM
+            general_params = {
+                "api_key": self.api_key,
+                "model": self.general_model,
+                "temperature": self.general_temperature
+            }
+            self.general_llm = ChatUpstage(**general_params)
             
-            self.llm = ChatUpstage(**params)
-            self.logger.log_step("LLM 모델 초기화", f"모델: {self.model}")
+            # RAG용 LLM
+            rag_params = {
+                "api_key": self.api_key,
+                "model": self.rag_model,
+                "temperature": self.rag_temperature
+            }
+            if "solar-pro2" in self.rag_model.lower():
+                rag_params["reasoning_effort"] = self.rag_reasoning_effort
+            
+            self.rag_llm = ChatUpstage(**rag_params)
+            
+            self.logger.log_step("LLM 모델들 초기화 완료", 
+                               f"Router: {self.router_model}, General: {self.general_model}, RAG: {self.rag_model}")
         except Exception as e:
             self.logger.log_error("LLM 초기화", e)
             raise
-    
-    def _init_default_prompt(self):
-        """기본 프롬프트 템플릿 초기화 (Jinja2 템플릿 사용)"""
-        self.logger.log_step("기본 프롬프트 템플릿 설정", "Jinja2 템플릿 기반으로 설정")
     
     def create_custom_prompt(self, 
                            system_message: str,
@@ -181,13 +182,61 @@ class LLMManager:
         
         return chat_history
     
-    def generate_response(self, 
-                         question: str,
-                         context: str = "",
-                         chat_history: List[Dict] = None,
-                         prompt_template: ChatPromptTemplate = None) -> str:
+    def generate_general_response(self, 
+                                question: str,
+                                chat_history: List[Dict] = None) -> str:
         """
-        질문에 대한 응답 생성
+        일반답변 생성
+        
+        Args:
+            question (str): 사용자 질문
+            chat_history (List[Dict], optional): 채팅 히스토리
+            
+        Returns:
+            str: 생성된 일반답변
+        """
+        self.logger.log_function_start("generate_general_response", 
+                                     question=question[:50] + "..." if len(question) > 50 else question)
+        
+        try:
+            # 일반답변용 프롬프트 렌더링
+            system_prompt = self.prompt_loader.render_template("general_response.jinja2", {"question": question})
+            
+            # 채팅 히스토리 변환
+            formatted_history = []
+            if chat_history:
+                formatted_history = self.format_chat_history(chat_history)
+            
+            # ChatPromptTemplate 생성
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}")
+            ])
+            
+            # 프롬프트 포맷팅
+            formatted_prompt = prompt.format_messages(
+                chat_history=formatted_history,
+                question=question
+            )
+            
+            # 일반답변용 LLM 호출
+            response = self.general_llm.invoke(formatted_prompt)
+            
+            self.logger.log_function_end("generate_general_response", "일반답변 생성 완료")
+            return response.content
+            
+        except Exception as e:
+            self.logger.log_error("generate_general_response", e)
+            return f"죄송합니다. 일반답변을 생성하는 중 오류가 발생했습니다: {str(e)}"
+    
+    def generate_rag_response(self, 
+                            question: str,
+                            context: str = "",
+                            chat_history: List[Dict] = None,
+                            prompt_template: ChatPromptTemplate = None) -> str:
+        """
+        RAG 답변 생성 (기존 generate_response와 동일)
         
         Args:
             question (str): 사용자 질문
@@ -196,9 +245,9 @@ class LLMManager:
             prompt_template (ChatPromptTemplate, optional): 커스텀 프롬프트
             
         Returns:
-            str: 생성된 응답
+            str: 생성된 RAG 답변
         """
-        self.logger.log_function_start("generate_response", 
+        self.logger.log_function_start("generate_rag_response", 
                                      question=question[:50] + "..." if len(question) > 50 else question)
         
         try:
@@ -239,15 +288,34 @@ class LLMManager:
                     question=question
                 )
             
-            # LLM 호출
-            response = self.llm.invoke(formatted_prompt)
+            # RAG용 LLM 호출
+            response = self.rag_llm.invoke(formatted_prompt)
             
-            self.logger.log_function_end("generate_response", "응답 생성 완료")
+            self.logger.log_function_end("generate_rag_response", "RAG 답변 생성 완료")
             return response.content
             
         except Exception as e:
-            self.logger.log_error("generate_response", e)
-            return f"죄송합니다. 응답을 생성하는 중 오류가 발생했습니다: {str(e)}"
+            self.logger.log_error("generate_rag_response", e)
+            return f"죄송합니다. RAG 답변을 생성하는 중 오류가 발생했습니다: {str(e)}"
+    
+    def generate_response(self, 
+                         question: str,
+                         context: str = "",
+                         chat_history: List[Dict] = None,
+                         prompt_template: ChatPromptTemplate = None) -> str:
+        """
+        질문에 대한 응답 생성 (호환성을 위해 유지, RAG용으로 사용)
+        
+        Args:
+            question (str): 사용자 질문
+            context (str): 검색된 컨텍스트
+            chat_history (List[Dict], optional): 채팅 히스토리
+            prompt_template (ChatPromptTemplate, optional): 커스텀 프롬프트
+            
+        Returns:
+            str: 생성된 응답
+        """
+        return self.generate_rag_response(question, context, chat_history, prompt_template)
     
     def generate_response_stream(self, 
                                question: str,
@@ -255,7 +323,7 @@ class LLMManager:
                                chat_history: List[Dict] = None,
                                prompt_template: ChatPromptTemplate = None) -> Generator[str, None, None]:
         """
-        스트리밍 응답 생성
+        스트리밍 응답 생성 (RAG용)
         
         Args:
             question (str): 사용자 질문
@@ -307,7 +375,7 @@ class LLMManager:
                 )
             
             # 스트리밍 응답
-            for chunk in self.llm.stream(formatted_prompt):
+            for chunk in self.rag_llm.stream(formatted_prompt):
                 if chunk.content:
                     yield chunk.content
             
@@ -317,46 +385,29 @@ class LLMManager:
             self.logger.log_error("generate_response_stream", e)
             yield f"죄송합니다. 응답을 생성하는 중 오류가 발생했습니다: {str(e)}"
     
-    def update_model_settings(self, 
-                            model: str = None,
-                            reasoning_effort: str = None,
-                            temperature: float = None):
-        """
-        모델 설정 업데이트
-        
-        Args:
-            model (str, optional): 새 모델명
-            reasoning_effort (str, optional): 새 추론 노력 수준
-            temperature (float, optional): 새 temperature 값
-        """
-        if model and model != self.model:
-            self.model = model
-            self.logger.log_step("모델 변경", f"새 모델: {model}")
-        
-        if reasoning_effort and reasoning_effort != self.reasoning_effort:
-            self.reasoning_effort = reasoning_effort
-            self.logger.log_step("추론 노력 수준 변경", f"새 수준: {reasoning_effort}")
-        
-        if temperature is not None and temperature != self.temperature:
-            self.temperature = temperature
-            self.logger.log_step("Temperature 변경", f"새 값: {temperature}")
-        
-        # LLM 재초기화
-        self._init_llm()
-    
     def get_model_info(self) -> Dict[str, Any]:
         """현재 모델 정보 반환"""
         return {
-            "model": self.model,
-            "reasoning_effort": self.reasoning_effort,
-            "temperature": self.temperature,
+            "router": {
+                "model": self.router_model,
+                "temperature": self.router_temperature
+            },
+            "general": {
+                "model": self.general_model,
+                "temperature": self.general_temperature
+            },
+            "rag": {
+                "model": self.rag_model,
+                "temperature": self.rag_temperature,
+                "reasoning_effort": self.rag_reasoning_effort
+            },
             "api_key_set": bool(self.api_key)
         }
     
     def validate_api_connection(self) -> bool:
         """API 연결 상태 확인"""
         try:
-            test_response = self.llm.invoke([HumanMessage(content="Hello")])
+            test_response = self.general_llm.invoke([HumanMessage(content="Hello")])
             self.logger.log_success("API 연결 확인 완료")
             return True
         except Exception as e:

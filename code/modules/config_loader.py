@@ -71,13 +71,19 @@ class ConfigLoader:
         """기본 설정값 반환"""
         return {
             "llm": {
-                "main_model": "solar-pro2",
-                "reasoning_effort": "high",
-                "temperature": 0.7
-            },
-            "router": {
-                "model": "upstage/solar-1-mini-chat",
-                "temperature": 0.1
+                "router": {
+                    "model": "solar-pro2",
+                    "temperature": 0.1
+                },
+                "general": {
+                    "model": "solar-pro2",
+                    "temperature": 0.7
+                },
+                "rag": {
+                    "model": "solar-pro2",
+                    "temperature": 0.7,
+                    "reasoning_effort": "high"
+                }
             },
             "embeddings": {
                 "model": "embedding-query"
@@ -120,12 +126,18 @@ class ConfigLoader:
     
     def _validate_specific_rules(self):
         """특정 검증 규칙 적용"""
-        # temperature 범위 검증
-        for section in ["llm", "router"]:
-            temp = self._config[section].get("temperature", 0.7)
-            if not (0.0 <= temp <= 1.0):
-                self.logger.log_warning_with_icon(f"temperature 값 범위 초과, 기본값으로 설정: {section}.temperature = {temp}")
-                self._config[section]["temperature"] = 0.7 if section == "llm" else 0.1
+        # LLM 설정의 temperature 범위 검증 (새로운 구조)
+        if "llm" in self._config:
+            llm_config = self._config["llm"]
+            for sub_section in ["router", "general", "rag"]:
+                if sub_section in llm_config:
+                    temp = llm_config[sub_section].get("temperature", 0.7)
+                    if not (0.0 <= temp <= 1.0):
+                        self.logger.log_warning_with_icon(f"temperature 값 범위 초과, 기본값으로 설정: llm.{sub_section}.temperature = {temp}")
+                        if sub_section == "router":
+                            llm_config[sub_section]["temperature"] = 0.1
+                        else:
+                            llm_config[sub_section]["temperature"] = 0.7
         
         # top_k 양수 검증
         top_k = self._config["retriever"].get("top_k", 5)
@@ -176,28 +188,44 @@ class ConfigLoader:
     
     def get_llm_config(self) -> Dict[str, Any]:
         """
-        LLM 설정 반환 (solar-pro2 조건부 처리 포함)
+        LLM 설정 반환 (새로운 계층 구조 지원)
         
         Returns:
-            Dict[str, Any]: LLM 초기화에 필요한 설정
+            Dict[str, Any]: LLM 초기화에 필요한 설정 (router, general, rag 포함)
         """
         llm_config = self.get_config("llm")
-        model = llm_config.get("main_model", "solar-pro2")
         
-        # solar-pro2 모델인 경우에만 reasoning_effort 포함
-        if "solar-pro2" in model.lower():
+        # 새로운 계층 구조가 있는지 확인
+        if "router" in llm_config and "general" in llm_config and "rag" in llm_config:
+            # 새로운 구조 사용
             result = {
-                "model": model,
-                "temperature": llm_config.get("temperature", 0.7),
-                "reasoning_effort": llm_config.get("reasoning_effort", "high")
+                "router": llm_config.get("router", {}),
+                "general": llm_config.get("general", {}),
+                "rag": llm_config.get("rag", {})
             }
-            self.logger.log_step("LLM 설정 (reasoning_effort 포함)", f"모델: {model}")
+            self.logger.log_step("LLM 설정 (새로운 계층 구조)", "router, general, rag 분리")
         else:
+            # 기존 구조 호환성 유지
+            model = llm_config.get("main_model", "solar-pro2")
+            temperature = llm_config.get("temperature", 0.7)
+            reasoning_effort = llm_config.get("reasoning_effort", "high")
+            
             result = {
-                "model": model,
-                "temperature": llm_config.get("temperature", 0.7)
+                "router": {
+                    "model": model,
+                    "temperature": 0.1
+                },
+                "general": {
+                    "model": model,
+                    "temperature": temperature
+                },
+                "rag": {
+                    "model": model,
+                    "temperature": temperature,
+                    "reasoning_effort": reasoning_effort if "solar-pro2" in model.lower() else None
+                }
             }
-            self.logger.log_step("LLM 설정 (reasoning_effort 제외)", f"모델: {model}")
+            self.logger.log_step("LLM 설정 (기존 구조 호환)", f"모델: {model}")
         
         return result
     
@@ -271,10 +299,13 @@ class ConfigLoader:
         
         summary = f"""
 === RAG 시스템 설정 요약 ===
-LLM 모델: {llm_config['model']}
-LLM Temperature: {llm_config['temperature']}
-Reasoning Effort: {llm_config.get('reasoning_effort', '사용안함')}
-라우터 모델: {self.get_config('router', 'model')}
+라우터 모델: {llm_config['router']['model']}
+라우터 Temperature: {llm_config['router']['temperature']}
+일반답변 모델: {llm_config['general']['model']}
+일반답변 Temperature: {llm_config['general']['temperature']}
+RAG 모델: {llm_config['rag']['model']}
+RAG Temperature: {llm_config['rag']['temperature']}
+RAG Reasoning Effort: {llm_config['rag'].get('reasoning_effort', '사용안함')}
 검색 방법: {retriever_config['search_type']}
 상위 K개 문서: {retriever_config['k']}
 청크 크기: {self.get_config('vectorstore', 'chunk_size')}

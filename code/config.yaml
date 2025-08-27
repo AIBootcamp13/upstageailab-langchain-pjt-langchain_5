@@ -1,18 +1,18 @@
 # RAG 시스템 설정 파일
 # 이 파일을 수정하여 모델, 검색 파라미터 등을 조정할 수 있습니다.
 
-# LLM 설정
+# LLM 설정 (모든 모델 통합 관리)
 llm:
-  main_model: "solar-pro2"       # LLM 메인 모델 (solar-pro2, solar-1-pro, etc.)
-  reasoning_effort: "high"       # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
-  temperature: 0.7               # 응답 다양성 조절 (0.0~1.0)
-  
-# 라우터 설정 (질문 라우팅용)
-router:
-  # model: "upstage/solar-1-mini-chat"  # 라우터 모델 (경량 모델 권장)
-  main_model: "solar-pro2"       # 라우터 모델 (경량 모델 권장)
-  reasoning_effort: "low"        # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
-  temperature: 0.1               # 라우팅 일관성 (낮을수록 일관됨)
+  router:
+    model: "solar-pro2"          # 라우팅 분류용 모델
+    temperature: 0.1             # 라우터용 temperature (낮을수록 일관성 높음)
+  general:
+    model: "solar-pro2"          # 일반답변용 모델
+    temperature: 0.7             # 일반답변용 temperature
+  rag:
+    model: "solar-pro2"          # RAG 답변용 모델
+    temperature: 0.7             # RAG 답변용 temperature
+    reasoning_effort: "high"     # RAG용 reasoning (solar-pro2만)
 
 # 임베딩 설정
 embeddings:
