@@ -229,15 +229,33 @@ class RAGQueryProcessor:
             from .sql import SQLManager
             db_path = str(Path(project_root) / "data" / "chat.db")
             sql_manager = SQLManager(db_path=db_path)
+            # 설정에서 메모리 윈도우 크기를 불러와 주입
+            try:
+                config_loader = get_config_loader()
+                db_conf = config_loader.get_database_config()
+                memory_k = db_conf.get("memory_window", 3)
+            except Exception:
+                memory_k = 3
+
             self.chat_history = ChatHistoryManager(
                 sql_manager=sql_manager,
-                auto_save=True
+                auto_save=True,
+                memory_k=memory_k
             )
         else:
             # 메모리 기반만 (CLI용)
+            # 설정에서 메모리 윈도우 크기를 불러와 주입 (CLI용도 동일 적용)
+            try:
+                config_loader = get_config_loader()
+                db_conf = config_loader.get_database_config()
+                memory_k = db_conf.get("memory_window", 3)
+            except Exception:
+                memory_k = 3
+
             self.chat_history = ChatHistoryManager(
                 sql_manager=None,
-                auto_save=False
+                auto_save=False,
+                memory_k=memory_k
             )
     
     def query(self, question: str, return_sources: bool = False) -> Dict[str, Any]:

@@ -30,6 +30,7 @@ from modules import (
     LLMManager, RetrieverManager, ChatHistoryManager,
     QueryRouter, RAGSystemInitializer, RAGQueryProcessor
 )
+from modules.config_loader import get_config_loader
 
 # 환경변수 로드 (스크립트 디렉토리 기준)
 load_dotenv(script_dir / '.env')
@@ -330,10 +331,18 @@ def create_new_conversation(sql_manager):
         # 새 세션 생성
         session_id = sql_manager.create_conversation()
         
-        # 채팅 히스토리 관리자 초기화
+        # 채팅 히스토리 관리자 초기화 (설정의 memory_window 적용)
+        try:
+            config_loader = get_config_loader()
+            db_conf = config_loader.get_database_config()
+            memory_k = db_conf.get("memory_window", 3)
+        except Exception:
+            memory_k = 3
+
         chat_manager = ChatHistoryManager(
             session_id=session_id,
-            sql_manager=sql_manager
+            sql_manager=sql_manager,
+            memory_k=memory_k
         )
         
         # 세션 상태 업데이트
@@ -351,10 +360,18 @@ def create_new_conversation(sql_manager):
 def load_conversation(session_id, sql_manager):
     """기존 대화 로드"""
     try:
-        # 채팅 히스토리 관리자 초기화
+        # 채팅 히스토리 관리자 초기화 (설정의 memory_window 적용)
+        try:
+            config_loader = get_config_loader()
+            db_conf = config_loader.get_database_config()
+            memory_k = db_conf.get("memory_window", 3)
+        except Exception:
+            memory_k = 3
+
         chat_manager = ChatHistoryManager(
             session_id=session_id,
-            sql_manager=sql_manager
+            sql_manager=sql_manager,
+            memory_k=memory_k
         )
         
         # 전체 대화 기록 가져오기

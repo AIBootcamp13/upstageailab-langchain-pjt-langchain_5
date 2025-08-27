@@ -96,7 +96,8 @@ class ConfigLoader:
             },
             "database": {
                 "enable_memory": False,
-                "conversation_limit": 20
+                "conversation_limit": 20,
+                "memory_window": 3
             }
         }
     
@@ -138,6 +139,14 @@ class ConfigLoader:
         if not isinstance(chunk_size, int) or chunk_size < 100:
             self.logger.log_warning_with_icon(f"chunk_size 값이 유효하지 않음, 기본값으로 설정: chunk_size = {chunk_size}")
             self._config["vectorstore"]["chunk_size"] = 1000
+
+        # database.memory_window 양수 검증
+        memory_window = self._config["database"].get("memory_window", 3)
+        if not isinstance(memory_window, int) or memory_window < 1:
+            self.logger.log_warning_with_icon(
+                f"memory_window 값이 유효하지 않음, 기본값으로 설정: memory_window = {memory_window}"
+            )
+            self._config["database"]["memory_window"] = 3
     
     def get_config(self, section: str = None, key: str = None) -> Any:
         """
@@ -225,7 +234,8 @@ class ConfigLoader:
         """데이터베이스 설정 반환"""
         return {
             "enable_memory": self.get_config("database", "enable_memory"),
-            "conversation_limit": self.get_config("database", "conversation_limit")
+            "conversation_limit": self.get_config("database", "conversation_limit"),
+            "memory_window": self.get_config("database", "memory_window")
         }
     
     def update_config(self, section: str, key: str, value: Any):

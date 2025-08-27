@@ -37,3 +37,4 @@ logging:
 database:
   enable_memory: false           # 대화 메모리 기능 활성화
   conversation_limit: 20         # 사이드바에 표시할 대화 수
+  memory_window: 3               # 최근 대화 메모리 창 크기 (대화 쌍 기준)
