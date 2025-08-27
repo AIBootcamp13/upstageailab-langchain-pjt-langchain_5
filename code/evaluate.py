@@ -1,11 +1,13 @@
 """
 RAG 시스템 품질 평가 도구 (evaluate.py)
 
-WebUI와 동일한 RAG 방식 및 메모리 방식을 사용하여
+WebUI와 동일한 라우터 및 메모리 방식을 사용하여
 RAGAS 프레임워크로 답변 품질을 평가하는 도구입니다.
 
 주요 기능:
-- WebUI와 동일한 시스템 초기화 (VectorStoreManager, LLMManager, RetrieverManager, ChatHistoryManager)
+- WebUI와 동일한 시스템 초기화 (VectorStoreManager, LLMManager, RetrieverManager, ChatHistoryManager, QueryRouter)
+- 라우터를 통한 질문 분류 (일반답변 vs RAG답변)
+- 메모리 기능을 포함한 대화 처리 (DB 저장 없음)
 - 사전 정의된 질문-정답 데이터셋 사용 (data/eval/question_dataset.json)
 - RAGAS 메트릭을 통한 품질 평가 (faithfulness, answer_relevancy, context_recall, answer_correctness)
 - 평가 결과 저장 및 리포트 생성 (data/eval/evaluation_results/)
@@ -49,7 +51,7 @@ from datasets import Dataset
 # 모듈 imports
 from modules import (
     VectorStoreManager, LLMManager, RetrieverManager, 
-    ChatHistoryManager, LoggerManager, RAGSystemInitializer, RAGQueryProcessor
+    ChatHistoryManager, LoggerManager, RAGSystemInitializer
 )
 
 
@@ -85,7 +87,7 @@ class RAGEvaluator:
             return json.load(f)
     
     def initialize_system(self):
-        """RAG 시스템 초기화 (config 기반)"""
+        """RAG 시스템 초기화 (라우터 포함)"""
         result = RAGSystemInitializer.initialize_system(
             current_file_path=script_dir,
             include_sql=False,
@@ -98,12 +100,31 @@ class RAGEvaluator:
             return False
         
         self.vector_manager, self.llm_manager, self.retriever_manager, self.query_processor = result
+        
+        # 라우터는 query_processor 내부에 포함됨
         return True
     
     def process_questions(self, dataset: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """질문들을 처리하고 답변 생성"""
+        """질문들을 라우터를 통해 처리하고 답변 생성"""
         results = []
         questions = dataset["questions"]
+        
+        # 메모리 관리자 초기화 (DB 저장 없음, 메모리만 사용) - 모든 질문에 대해 동일한 인스턴스 사용
+        try:
+            from modules.config_loader import get_config_loader
+            config_loader = get_config_loader()
+            db_conf = config_loader.get_database_config()
+            memory_k = db_conf.get("memory_window", 3)
+        except Exception:
+            memory_k = 3
+
+        # 모든 질문에 대해 동일한 ChatHistoryManager 인스턴스 사용 (메모리 연속성 확보)
+        chat_manager = ChatHistoryManager(
+            session_id="evaluation_session",  # 고정된 세션 ID 사용
+            memory_k=memory_k,
+            sql_manager=None,  # DB 저장 안함
+            auto_save=True     # 메모리에 저장 활성화
+        )
         
         for i, question_data in enumerate(questions, 1):
             start_time = time.time()
@@ -111,21 +132,50 @@ class RAGEvaluator:
             try:
                 question = question_data["question"]
                 
-                # 자동 메모리 기능이 포함된 간단한 질의 처리 사용
-                result = self.query_processor.query(
+                # 통합 질의 처리 (라우팅 + 분기 + 메모리) - 같은 chat_manager 사용
+                result = self.query_processor.unified_query(
                     question=question,
+                    chat_history_manager=chat_manager,  # 같은 인스턴스 사용
+                    auto_save=True,  # 메모리에 저장 활성화
                     return_sources=True
                 )
                 
-                if not result["success"]:
+                if result["success"]:
+                    response = result["response"]
+                    processing_type = result["processing_type"]
+                    routing_result = result["routing_info"]
+                    sources = result.get("sources", [])
+                    documents = result.get("documents", [])
+                    
+                    # 처리 시간 계산
+                    processing_time = (time.time() - start_time) * 1000  # ms
+                    
+                    # 간결한 로그 출력으로 질문과 답변 내용 확인
+                    self.logger.info(f"\n{'='*60}")
+                    self.logger.info(f"📝 질문 {i}: {question}")
+                    self.logger.info(f"🏷️  카테고리: {question_data['category']} | 처리타입: {processing_type}")
+                    
+                    # 답변 내용 출력 (긴 답변은 요약)
+                    if len(response) > 300:
+                        response_preview = response[:300] + "..."
+                        self.logger.info(f"💬 답변 (요약): {response_preview}")
+                        self.logger.info(f"📄 전체 답변 길이: {len(response)}자")
+                    else:
+                        self.logger.info(f"💬 답변: {response}")
+                    
+                    # RAG 관련 정보 출력
+                    if routing_result["use_rag"] and documents:
+                        self.logger.info(f"🔍 검색된 문서: {len(documents)}개")
+                        if sources:
+                            self.logger.info(f"📚 소스: {', '.join(sources[:3])}")
+                    else:
+                        self.logger.info("💭 일반 답변 (문서 검색 없음)")
+                    
+                    self.logger.info(f"⏱️  처리시간: {round(processing_time, 0)}ms")
+                    self.logger.info(f"{'='*60}")
+                    
+                else:
                     raise Exception(result["error"])
-                
-                response = result["response"]
-                documents = result.get("documents", [])
-                source_documents = result.get("sources", [])
-                contexts = [doc.page_content for doc in documents]
-                
-                processing_time = (time.time() - start_time) * 1000  # ms
                 
                 # 결과 저장
                 results.append({
@@ -135,8 +185,10 @@ class RAGEvaluator:
                     "ground_truth": question_data["ground_truth"],
                     "category": question_data["category"],
                     "difficulty": question_data["difficulty"],
-                    "retrieved_contexts": contexts,
-                    "source_documents": source_documents,
+                    "processing_type": processing_type,
+                    "routing_confidence": routing_result.get("confidence", 0.0),
+                    "retrieved_contexts": [doc.page_content for doc in documents] if routing_result["use_rag"] and documents else [],
+                    "source_documents": sources if routing_result["use_rag"] else [],
                     "expected_sources": question_data.get("expected_sources", []),
                     "processing_time_ms": round(processing_time, 2),
                     "depends_on": question_data.get("depends_on"),
@@ -152,12 +204,29 @@ class RAGEvaluator:
                     "ground_truth": question_data["ground_truth"],
                     "category": question_data["category"],
                     "difficulty": question_data["difficulty"],
+                    "processing_type": "ERROR",
+                    "routing_confidence": 0.0,
                     "retrieved_contexts": [],
                     "source_documents": [],
                     "expected_sources": question_data.get("expected_sources", []),
                     "processing_time_ms": 0,
                     "error": str(e)
                 })
+        
+        # 메모리 상태 확인 및 로깅
+        try:
+            summary = chat_manager.get_conversation_summary()
+            self.logger.log_step("메모리 상태 확인", 
+                               f"전체 메시지: {summary.get('total_messages', 0)}개, "
+                               f"메모리 메시지: {summary.get('memory_messages', 0)}개")
+            
+            # 실제 메모리 내용 확인
+            memory_messages = chat_manager.memory.chat_memory.messages
+            self.logger.log_step("메모리 내용 확인", 
+                               f"메모리에 저장된 메시지 수: {len(memory_messages)}개")
+            
+        except Exception as e:
+            self.logger.log_error("메모리 상태 확인", e)
         
         return results
     
@@ -248,17 +317,27 @@ class RAGEvaluator:
             if category not in categories:
                 categories[category] = {
                     "questions": [],
-                    "question_count": 0
+                    "question_count": 0,
+                    "rag_count": 0,
+                    "general_count": 0
                 }
             
             categories[category]["questions"].append(result)
             categories[category]["question_count"] += 1
+            
+            # 라우팅 타입별 카운트
+            if result.get("processing_type") == "RAG":
+                categories[category]["rag_count"] += 1
+            elif result.get("processing_type") == "GENERAL":
+                categories[category]["general_count"] += 1
         
         # 각 카테고리별 점수 (전체 점수 기반 추정)
         category_scores = {}
         for category, data in categories.items():
             category_scores[category] = {
                 "question_count": data["question_count"],
+                "rag_count": data["rag_count"],
+                "general_count": data["general_count"],
                 "avg_processing_time_ms": sum(q.get("processing_time_ms", 0) 
                                             for q in data["questions"]) / data["question_count"],
                 "success_rate": len([q for q in data["questions"] 
@@ -280,29 +359,46 @@ class RAGEvaluator:
             filename = f"{timestamp}.json"
             filepath = self.results_dir / filename
             
+            # 라우팅 통계 계산
+            total_questions = len(results)
+            rag_questions = len([r for r in results if r.get("processing_type") == "RAG"])
+            general_questions = len([r for r in results if r.get("processing_type") == "GENERAL"])
+            error_questions = len([r for r in results if r.get("processing_type") == "ERROR"])
+            
             # 결과 데이터 구성
             evaluation_report = {
                 "metadata": {
                     "timestamp": datetime.now().isoformat(),
                     "dataset_version": dataset["metadata"]["version"],
                     "model_config": {
-                        "llm_model": "solar-pro2",
+                        "router_model": "solar-1-mini-chat",
+                        "rag_llm_model": "solar-pro2",
+                        "general_llm_model": "solar-1-mini-chat",
                         "embedding_model": "embedding-query",
                         "chunk_size": 1000,
                         "chunk_overlap": 50,
                         "retrieval_k": 5
                     },
-                    "evaluation_framework": "RAGAS 0.3.2"
+                    "evaluation_framework": "RAGAS 0.3.2",
+                    "routing_enabled": True
+                },
+                "routing_statistics": {
+                    "total_questions": total_questions,
+                    "rag_questions": rag_questions,
+                    "general_questions": general_questions,
+                    "error_questions": error_questions,
+                    "rag_percentage": (rag_questions / total_questions * 100) if total_questions > 0 else 0,
+                    "general_percentage": (general_questions / total_questions * 100) if total_questions > 0 else 0
                 },
                 "overall_scores": overall_scores,
                 "category_scores": category_scores,
                 "detailed_results": results,
                 "summary": {
-                    "total_questions": len(results),
+                    "total_questions": total_questions,
                     "total_processing_time_ms": sum(r.get("processing_time_ms", 0) for r in results),
-                    "avg_processing_time_ms": sum(r.get("processing_time_ms", 0) for r in results) / len(results),
+                    "avg_processing_time_ms": sum(r.get("processing_time_ms", 0) for r in results) / len(results) if results else 0,
                     "memory_test_count": len([r for r in results if r["category"] == "memory"]),
-                    "error_count": len([r for r in results if r.get("error")])
+                    "error_count": error_questions
                 }
             }
             
@@ -330,8 +426,20 @@ class RAGEvaluator:
                                results: List[Dict[str, Any]]):
         """평가 결과 요약 출력"""
         self.logger.info("\n" + "="*60)
-        self.logger.info("🎯 RAG 시스템 품질 평가 결과")
+        self.logger.info("🎯 RAG 시스템 품질 평가 결과 (라우터 기반)")
         self.logger.info("="*60)
+        
+        # 라우팅 통계
+        total_questions = len(results)
+        rag_questions = len([r for r in results if r.get("processing_type") == "RAG"])
+        general_questions = len([r for r in results if r.get("processing_type") == "GENERAL"])
+        error_questions = len([r for r in results if r.get("processing_type") == "ERROR"])
+        
+        self.logger.info("\n🔄 라우팅 통계:")
+        self.logger.info(f"  • 총 질문 수: {total_questions}")
+        self.logger.info(f"  • RAG 처리: {rag_questions}개 ({rag_questions/total_questions*100:.1f}%)")
+        self.logger.info(f"  • 일반답변: {general_questions}개 ({general_questions/total_questions*100:.1f}%)")
+        self.logger.info(f"  • 오류: {error_questions}개")
         
         # 전체 점수
         self.logger.info("\n📊 전체 RAGAS 점수:")
@@ -345,6 +453,7 @@ class RAGEvaluator:
         self.logger.info("\n📂 카테고리별 분석:")
         for category, scores in category_scores.items():
             self.logger.info(f"  • {category.upper()}: {scores['question_count']}개 질문")
+            self.logger.info(f"    - RAG: {scores['rag_count']}개, 일반: {scores['general_count']}개")
             self.logger.info(f"    - 성공률: {scores['success_rate']:.1%}")
             self.logger.info(f"    - 평균 처리시간: {scores['avg_processing_time_ms']:.0f}ms")
         
