@@ -21,6 +21,8 @@ from langchain_upstage import ChatUpstage
 from langchain_upstage import UpstageEmbeddings
 
 from .logger import LoggerManager
+from .prompt_loader import get_prompt_loader
+from .config_loader import get_config_loader
 
 
 class LLMManager:
@@ -28,23 +30,49 @@ class LLMManager:
     
     def __init__(self, 
                  api_key: str = None,
-                 model: str = "solar-pro2",
-                 reasoning_effort: str = "high",
-                 temperature: float = 0.7):
+                 use_config: bool = True,
+                 model: str = None,
+                 reasoning_effort: str = None,
+                 temperature: float = None):
         """
         LLMManager 초기화
         
         Args:
             api_key (str, optional): Upstage API 키. None이면 환경변수에서 가져옴
-            model (str): 사용할 모델명
-            reasoning_effort (str): 추론 노력 수준
-            temperature (float): 응답 다양성 조절 (0.0~1.0)
+            use_config (bool): config.yaml 사용 여부 (기본: True)
+            model (str, optional): 사용할 모델명 (config 우선, 없으면 이 값 사용)
+            reasoning_effort (str, optional): 추론 노력 수준 (config 우선)
+            temperature (float, optional): 응답 다양성 조절 (config 우선)
         """
         self.logger = LoggerManager("LLM")
         self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
-        self.model = model
-        self.reasoning_effort = reasoning_effort
-        self.temperature = temperature
+        
+        # 설정 로드
+        if use_config:
+            try:
+                config_loader = get_config_loader()
+                llm_config = config_loader.get_llm_config()
+                
+                self.model = llm_config.get("model", model or "solar-pro2")
+                self.temperature = llm_config.get("temperature", temperature or 0.7)
+                
+                # solar-pro2 모델인 경우에만 reasoning_effort 설정
+                if "solar-pro2" in self.model.lower():
+                    self.reasoning_effort = llm_config.get("reasoning_effort", reasoning_effort or "high")
+                else:
+                    self.reasoning_effort = None
+                
+                self.logger.log_step("Config 기반 LLM 설정", 
+                                   f"모델: {self.model}, reasoning: {self.reasoning_effort}")
+            except Exception as e:
+                self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
+                self.model = model or "solar-pro2"
+                self.reasoning_effort = reasoning_effort or "high" if "solar-pro2" in (model or "solar-pro2") else None
+                self.temperature = temperature or 0.7
+        else:
+            self.model = model or "solar-pro2"
+            self.reasoning_effort = reasoning_effort or "high" if "solar-pro2" in (model or "solar-pro2") else None
+            self.temperature = temperature or 0.7
         
         if not self.api_key:
             raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
@@ -52,42 +80,53 @@ class LLMManager:
         # LLM 초기화
         self._init_llm()
         
+        # 프롬프트 로더 초기화
+        self.prompt_loader = get_prompt_loader()
+        
         # 기본 프롬프트 템플릿 설정
         self._init_default_prompt()
         
         self.logger.log_success("LLM Manager 초기화 완료")
     
+    def _is_reasoning_model(self, model: str) -> bool:
+        """
+        모델이 reasoning 기능을 지원하는지 확인
+        
+        Args:
+            model (str): 모델명
+            
+        Returns:
+            bool: reasoning 모델 여부
+        """
+        reasoning_models = ["solar-pro", "solar-1-pro"]
+        return any(rm in model.lower() for rm in reasoning_models)
+    
     def _init_llm(self):
         """LLM 모델 초기화"""
         try:
-            self.llm = ChatUpstage(
-                api_key=self.api_key,
-                model=self.model,
-                reasoning_effort=self.reasoning_effort,
-                temperature=self.temperature
-            )
+            # 기본 파라미터 설정
+            params = {
+                "api_key": self.api_key,
+                "model": self.model,
+                "temperature": self.temperature
+            }
+            
+            # solar-pro2 모델이고 reasoning_effort가 설정된 경우에만 추가
+            if self.reasoning_effort is not None and "solar-pro2" in self.model.lower():
+                params["reasoning_effort"] = self.reasoning_effort
+                self.logger.log_step("Solar-Pro2 모델 감지", f"reasoning_effort: {self.reasoning_effort}")
+            else:
+                self.logger.log_step("일반 모델 또는 reasoning_effort 미설정", "reasoning_effort 파라미터 제외")
+            
+            self.llm = ChatUpstage(**params)
             self.logger.log_step("LLM 모델 초기화", f"모델: {self.model}")
         except Exception as e:
             self.logger.log_error("LLM 초기화", e)
             raise
     
     def _init_default_prompt(self):
-        """기본 프롬프트 템플릿 초기화"""
-        tz = pytz.timezone("Asia/Seoul")
-        self.current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-        
-        self.default_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an assistant for question-answering tasks. 
-Use the following pieces of retrieved context to answer the question. 
-If you don't know the answer, just say that you don't know. 
-Answer in Korean. The current time is {nowTime}.
-
-Context: {context}"""),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}")
-        ])
-        
-        self.logger.log_step("기본 프롬프트 템플릿 설정", f"현재시각: {self.current_time}")
+        """기본 프롬프트 템플릿 초기화 (Jinja2 템플릿 사용)"""
+        self.logger.log_step("기본 프롬프트 템플릿 설정", "Jinja2 템플릿 기반으로 설정")
     
     def create_custom_prompt(self, 
                            system_message: str,
@@ -163,21 +202,42 @@ Context: {context}"""),
                                      question=question[:50] + "..." if len(question) > 50 else question)
         
         try:
-            # 프롬프트 템플릿 선택
-            prompt = prompt_template or self.default_prompt
-            
-            # 채팅 히스토리 변환
-            formatted_history = []
-            if chat_history:
-                formatted_history = self.format_chat_history(chat_history)
-            
-            # 프롬프트 포맷팅
-            formatted_prompt = prompt.format_messages(
-                context=context,
-                chat_history=formatted_history,
-                question=question,
-                nowTime=self.current_time
-            )
+            if prompt_template:
+                # 커스텀 프롬프트 템플릿 사용
+                prompt = prompt_template
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = prompt.format_messages(
+                    context=context,
+                    chat_history=formatted_history,
+                    question=question
+                )
+            else:
+                # 기본 Jinja2 템플릿 사용
+                system_prompt = self.prompt_loader.render_rag_prompt(context, question)
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # ChatPromptTemplate 생성
+                default_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
+                    ("human", "{question}")
+                ])
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = default_prompt.format_messages(
+                    chat_history=formatted_history,
+                    question=question
+                )
             
             # LLM 호출
             response = self.llm.invoke(formatted_prompt)
@@ -209,21 +269,42 @@ Context: {context}"""),
         self.logger.log_function_start("generate_response_stream")
         
         try:
-            # 프롬프트 템플릿 선택
-            prompt = prompt_template or self.default_prompt
-            
-            # 채팅 히스토리 변환
-            formatted_history = []
-            if chat_history:
-                formatted_history = self.format_chat_history(chat_history)
-            
-            # 프롬프트 포맷팅
-            formatted_prompt = prompt.format_messages(
-                context=context,
-                chat_history=formatted_history,
-                question=question,
-                nowTime=self.current_time
-            )
+            if prompt_template:
+                # 커스텀 프롬프트 템플릿 사용
+                prompt = prompt_template
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = prompt.format_messages(
+                    context=context,
+                    chat_history=formatted_history,
+                    question=question
+                )
+            else:
+                # 기본 Jinja2 템플릿 사용
+                system_prompt = self.prompt_loader.render_rag_prompt(context, question)
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # ChatPromptTemplate 생성
+                default_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
+                    ("human", "{question}")
+                ])
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = default_prompt.format_messages(
+                    chat_history=formatted_history,
+                    question=question
+                )
             
             # 스트리밍 응답
             for chunk in self.llm.stream(formatted_prompt):

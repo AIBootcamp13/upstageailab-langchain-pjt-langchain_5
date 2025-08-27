@@ -85,10 +85,11 @@ class RAGEvaluator:
             return json.load(f)
     
     def initialize_system(self):
-        """RAG 시스템 초기화"""
+        """RAG 시스템 초기화 (config 기반)"""
         result = RAGSystemInitializer.initialize_system(
             current_file_path=script_dir,
             include_sql=False,
+            use_config=True,  # config.yaml 사용
             logger_name="EvaluationRAG",
             enable_db_memory=False  # 평가용은 메모리만 사용
         )

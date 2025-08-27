@@ -16,6 +16,7 @@ from langchain_core.documents import Document
 from langchain_upstage import UpstageEmbeddings
 
 from .logger import LoggerManager
+from .config_loader import get_config_loader
 
 
 class RetrieverManager:
@@ -23,23 +24,44 @@ class RetrieverManager:
     
     def __init__(self, 
                  vectorstore: FAISS = None,
-                 search_type: str = "similarity",
-                 k: int = 5,
+                 use_config: bool = True,
+                 search_type: str = None,
+                 k: int = None,
                  score_threshold: float = None):
         """
         RetrieverManager 초기화
         
         Args:
             vectorstore (FAISS, optional): FAISS 벡터스토어
-            search_type (str): 검색 타입 ("similarity", "mmr", "similarity_score_threshold")
-            k (int): 반환할 문서 수
-            score_threshold (float, optional): 유사도 임계값 (similarity_score_threshold 타입에서 사용)
+            use_config (bool): config.yaml 사용 여부 (기본: True)
+            search_type (str, optional): 검색 타입 (config 우선)
+            k (int, optional): 반환할 문서 수 (config 우선)
+            score_threshold (float, optional): 유사도 임계값 (config 우선)
         """
         self.logger = LoggerManager("Retriever")
         self.vectorstore = vectorstore
-        self.search_type = search_type
-        self.k = k
-        self.score_threshold = score_threshold
+        
+        # 설정 로드
+        if use_config:
+            try:
+                config_loader = get_config_loader()
+                retriever_config = config_loader.get_retriever_config()
+                
+                self.search_type = retriever_config.get("search_type", search_type or "similarity")
+                self.k = retriever_config.get("k", k or 5)
+                self.score_threshold = retriever_config.get("score_threshold", score_threshold or 0.8)
+                
+                self.logger.log_step("Config 기반 Retriever 설정", 
+                                   f"타입: {self.search_type}, k: {self.k}, threshold: {self.score_threshold}")
+            except Exception as e:
+                self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
+                self.search_type = search_type or "similarity"
+                self.k = k or 5
+                self.score_threshold = score_threshold or 0.8
+        else:
+            self.search_type = search_type or "similarity"
+            self.k = k or 5
+            self.score_threshold = score_threshold or 0.8
         self.retriever = None
         
         # 검색기 초기화
