@@ -26,6 +26,7 @@ from .chat_history import ChatHistoryManager
 from .crawler import CrawlerManager
 from .router import QueryRouter
 from .rag_system import RAGSystemInitializer, RAGQueryProcessor
+from .prompt_loader import PromptLoader, get_prompt_loader
 
 __all__ = [
     "SQLManager",
@@ -38,4 +39,6 @@ __all__ = [
     "QueryRouter",
     "RAGSystemInitializer", 
     "RAGQueryProcessor",
+    "PromptLoader",
+    "get_prompt_loader",
 ]

@@ -18,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
 
 from .logger import LoggerManager
+from .prompt_loader import get_prompt_loader
 
 
 class QueryRouter:
@@ -41,10 +42,6 @@ class QueryRouter:
         if not self.api_key:
             raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
         
-        # 현재 시간 설정 (한국 시간)
-        tz = pytz.timezone("Asia/Seoul")
-        self.current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-        
         # 라우팅용 경량 모델 초기화 (reasoning_effort 제외)
         self.router_llm = ChatUpstage(
             api_key=self.api_key,
@@ -52,61 +49,8 @@ class QueryRouter:
             temperature=temperature
         )
         
-        # 답변 생성 및 라우팅 프롬프트 템플릿
-        self.classification_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful AI assistant that can answer general questions directly.
-However, for specialized bakery and pastry technical questions, you need to access a knowledge base.
-The current time is {current_time}.
-
-YOUR TASK:
-1. If the question is general (greetings, weather, programming, etc.) - ANSWER DIRECTLY in Korean
-2. If the question requires specialized bakery/pastry knowledge - RESPOND WITH EXACTLY: "BAKERY-RAG"
-
-IMPORTANT RULES FOR BAKERY-RAG:
-- Output ONLY the text "BAKERY-RAG" - nothing else
-- Do NOT include "BAKERY-RAG" in a sentence or explanation
-- Do NOT say "This needs BAKERY-RAG" or similar phrases
-- Do NOT add periods, explanations, or additional text
-- Just output: BAKERY-RAG
-
-BAKERY-RAG is needed for:
-- Technical baking questions (recipes, techniques, troubleshooting)
-- Baking ingredients and their functions  
-- Professional bakery equipment and processes
-- Bakery certifications and exams
-- Food science related to baking
-- Specific baking problem solving
-
-ANSWER DIRECTLY for:
-- General greetings and conversation
-- Non-baking topics (weather, news, programming, etc.)
-- Simple opinions about food
-- Business questions (locations, hours, prices)
-- General life advice
-
-Examples:
-Q: "안녕하세요"
-A: 안녕하세요! 무엇을 도와드릴까요?
-
-Q: "오늘 날씨 어때?"
-A: 죄송하지만 실시간 날씨 정보는 제공할 수 없습니다. 날씨 앱이나 웹사이트를 확인해보시는 것을 추천드립니다.
-
-Q: "크로와상 반죽이 왜 층이 안 생기죠?"
-A: BAKERY-RAG
-
-Q: "파이썬 배우고 싶어요"
-A: 파이썬은 배우기 쉽고 강력한 프로그래밍 언어입니다. 온라인 강의나 공식 튜토리얼부터 시작하시는 것을 추천드립니다.
-
-Q: "빵이 맛있어 보이네요"
-A: 맛있어 보이는 빵을 발견하셨군요! 좋은 빵을 즐기시길 바랍니다.
-
-Q: "이스트와 베이킹파우더 차이점이 뭐예요?"
-A: BAKERY-RAG
-
-Q: "좋은 하루 되세요"
-A: 감사합니다! 좋은 하루 되세요!"""),
-            ("human", "{question}")
-        ])
+        # 프롬프트 로더 초기화
+        self.prompt_loader = get_prompt_loader()
         
         self.logger.log_success("Query Router 초기화 완료")
     
@@ -124,11 +68,17 @@ A: 감사합니다! 좋은 하루 되세요!"""),
             }
         """
         try:
+            # Jinja2 템플릿을 사용하여 시스템 프롬프트 렌더링
+            system_prompt = self.prompt_loader.render_routing_prompt(question)
+            
+            # ChatPromptTemplate 생성 
+            classification_prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{question}")
+            ])
+            
             # 프롬프트 포맷팅
-            messages = self.classification_prompt.format_messages(
-                question=question,
-                current_time=self.current_time
-            )
+            messages = classification_prompt.format_messages(question=question)
             
             # LLM 호출
             response = self.router_llm.invoke(messages)

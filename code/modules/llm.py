@@ -21,6 +21,7 @@ from langchain_upstage import ChatUpstage
 from langchain_upstage import UpstageEmbeddings
 
 from .logger import LoggerManager
+from .prompt_loader import get_prompt_loader
 
 
 class LLMManager:
@@ -51,6 +52,9 @@ class LLMManager:
         
         # LLM 초기화
         self._init_llm()
+        
+        # 프롬프트 로더 초기화
+        self.prompt_loader = get_prompt_loader()
         
         # 기본 프롬프트 템플릿 설정
         self._init_default_prompt()
@@ -94,22 +98,8 @@ class LLMManager:
             raise
     
     def _init_default_prompt(self):
-        """기본 프롬프트 템플릿 초기화"""
-        tz = pytz.timezone("Asia/Seoul")
-        self.current_time = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-        
-        self.default_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an assistant for question-answering tasks. 
-Use the following pieces of retrieved context to answer the question. 
-If you don't know the answer, just say that you don't know. 
-Answer in Korean. The current time is {nowTime}.
-
-Context: {context}"""),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}")
-        ])
-        
-        self.logger.log_step("기본 프롬프트 템플릿 설정", f"현재시각: {self.current_time}")
+        """기본 프롬프트 템플릿 초기화 (Jinja2 템플릿 사용)"""
+        self.logger.log_step("기본 프롬프트 템플릿 설정", "Jinja2 템플릿 기반으로 설정")
     
     def create_custom_prompt(self, 
                            system_message: str,
@@ -185,21 +175,42 @@ Context: {context}"""),
                                      question=question[:50] + "..." if len(question) > 50 else question)
         
         try:
-            # 프롬프트 템플릿 선택
-            prompt = prompt_template or self.default_prompt
-            
-            # 채팅 히스토리 변환
-            formatted_history = []
-            if chat_history:
-                formatted_history = self.format_chat_history(chat_history)
-            
-            # 프롬프트 포맷팅
-            formatted_prompt = prompt.format_messages(
-                context=context,
-                chat_history=formatted_history,
-                question=question,
-                nowTime=self.current_time
-            )
+            if prompt_template:
+                # 커스텀 프롬프트 템플릿 사용
+                prompt = prompt_template
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = prompt.format_messages(
+                    context=context,
+                    chat_history=formatted_history,
+                    question=question
+                )
+            else:
+                # 기본 Jinja2 템플릿 사용
+                system_prompt = self.prompt_loader.render_rag_prompt(context, question)
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # ChatPromptTemplate 생성
+                default_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
+                    ("human", "{question}")
+                ])
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = default_prompt.format_messages(
+                    chat_history=formatted_history,
+                    question=question
+                )
             
             # LLM 호출
             response = self.llm.invoke(formatted_prompt)
@@ -231,21 +242,42 @@ Context: {context}"""),
         self.logger.log_function_start("generate_response_stream")
         
         try:
-            # 프롬프트 템플릿 선택
-            prompt = prompt_template or self.default_prompt
-            
-            # 채팅 히스토리 변환
-            formatted_history = []
-            if chat_history:
-                formatted_history = self.format_chat_history(chat_history)
-            
-            # 프롬프트 포맷팅
-            formatted_prompt = prompt.format_messages(
-                context=context,
-                chat_history=formatted_history,
-                question=question,
-                nowTime=self.current_time
-            )
+            if prompt_template:
+                # 커스텀 프롬프트 템플릿 사용
+                prompt = prompt_template
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = prompt.format_messages(
+                    context=context,
+                    chat_history=formatted_history,
+                    question=question
+                )
+            else:
+                # 기본 Jinja2 템플릿 사용
+                system_prompt = self.prompt_loader.render_rag_prompt(context, question)
+                
+                # 채팅 히스토리 변환
+                formatted_history = []
+                if chat_history:
+                    formatted_history = self.format_chat_history(chat_history)
+                
+                # ChatPromptTemplate 생성
+                default_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
+                    ("human", "{question}")
+                ])
+                
+                # 프롬프트 포맷팅
+                formatted_prompt = default_prompt.format_messages(
+                    chat_history=formatted_history,
+                    question=question
+                )
             
             # 스트리밍 응답
             for chunk in self.llm.stream(formatted_prompt):
