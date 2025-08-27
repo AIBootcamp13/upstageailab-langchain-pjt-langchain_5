@@ -22,6 +22,7 @@ from .retriever import RetrieverManager
 from .sql import SQLManager
 from .chat_history import ChatHistoryManager
 from .logger import LoggerManager
+from .config_loader import get_config_loader
 
 
 class RAGSystemInitializer:
@@ -50,19 +51,59 @@ class RAGSystemInitializer:
         return str(project_root), pdf_dir, vectorstore_dir
     
     @staticmethod
-    def initialize_embeddings() -> UpstageEmbeddings:
-        """임베딩 모델 초기화"""
+    def initialize_embeddings(use_config: bool = True) -> UpstageEmbeddings:
+        """
+        임베딩 모델 초기화 (config 기반)
+        
+        Args:
+            use_config (bool): config.yaml 사용 여부
+        """
+        if use_config:
+            try:
+                config_loader = get_config_loader()
+                embeddings_config = config_loader.get_embeddings_config()
+                model = embeddings_config.get("model", "embedding-query")
+            except Exception:
+                model = "embedding-query"
+        else:
+            model = "embedding-query"
+        
         return UpstageEmbeddings(
             api_key=os.getenv("UPSTAGE_API_KEY"),
-            model="embedding-query"
+            model=model
         )
     
     @staticmethod
     def initialize_vector_manager(pdf_dir: str, vectorstore_dir: str, 
                                 embeddings: UpstageEmbeddings,
-                                chunk_size: int = 1000,
-                                chunk_overlap: int = 50) -> VectorStoreManager:
-        """벡터스토어 관리자 초기화"""
+                                use_config: bool = True,
+                                chunk_size: int = None,
+                                chunk_overlap: int = None) -> VectorStoreManager:
+        """
+        벡터스토어 관리자 초기화 (config 기반)
+        
+        Args:
+            pdf_dir (str): PDF 디렉토리 경로
+            vectorstore_dir (str): 벡터스토어 디렉토리 경로
+            embeddings (UpstageEmbeddings): 임베딩 모델
+            use_config (bool): config.yaml 사용 여부
+            chunk_size (int, optional): 청크 크기 (config 우선)
+            chunk_overlap (int, optional): 청크 겹침 (config 우선)
+        """
+        if use_config:
+            try:
+                config_loader = get_config_loader()
+                vectorstore_config = config_loader.get_vectorstore_config()
+                
+                chunk_size = vectorstore_config.get("chunk_size", chunk_size or 1000)
+                chunk_overlap = vectorstore_config.get("chunk_overlap", chunk_overlap or 50)
+            except Exception:
+                chunk_size = chunk_size or 1000
+                chunk_overlap = chunk_overlap or 50
+        else:
+            chunk_size = chunk_size or 1000
+            chunk_overlap = chunk_overlap or 50
+        
         return VectorStoreManager(
             pdf_dir=pdf_dir,
             vectorstore_dir=vectorstore_dir, 
@@ -75,18 +116,20 @@ class RAGSystemInitializer:
     def initialize_system(cls, 
                          current_file_path: Path,
                          include_sql: bool = False,
-                         chunk_size: int = 1000,
-                         chunk_overlap: int = 50,
+                         use_config: bool = True,
+                         chunk_size: int = None,
+                         chunk_overlap: int = None,
                          logger_name: str = "RAGSystem",
                          enable_db_memory: bool = False) -> Tuple:
         """
-        표준 RAG 시스템 초기화
+        표준 RAG 시스템 초기화 (config 기반)
         
         Args:
             current_file_path (Path): 현재 실행 파일 경로
             include_sql (bool): SQL 관리자 포함 여부
-            chunk_size (int): 청크 크기
-            chunk_overlap (int): 청크 겹침
+            use_config (bool): config.yaml 사용 여부 (기본: True)
+            chunk_size (int, optional): 청크 크기 (config 우선)
+            chunk_overlap (int, optional): 청크 겹침 (config 우선)
             logger_name (str): 로거 이름
             enable_db_memory (bool): RAGQueryProcessor에 DB 메모리 기능 활성화 여부
             
@@ -101,13 +144,16 @@ class RAGSystemInitializer:
             project_root, pdf_dir, vectorstore_dir = cls.get_project_paths(current_file_path)
             logger.log_step("프로젝트 경로 설정", f"root: {project_root}")
             
-            # 2. 임베딩 모델 초기화
-            embeddings = cls.initialize_embeddings()
+            # 2. 임베딩 모델 초기화 (config 기반)
+            embeddings = cls.initialize_embeddings(use_config=use_config)
             logger.log_step("임베딩 모델 초기화 완료")
             
-            # 3. 벡터스토어 관리자 초기화
+            # 3. 벡터스토어 관리자 초기화 (config 기반)
             vector_manager = cls.initialize_vector_manager(
-                pdf_dir, vectorstore_dir, embeddings, chunk_size, chunk_overlap
+                pdf_dir, vectorstore_dir, embeddings, 
+                use_config=use_config, 
+                chunk_size=chunk_size, 
+                chunk_overlap=chunk_overlap
             )
             logger.log_step("벡터스토어 관리자 초기화 완료")
             
@@ -119,12 +165,12 @@ class RAGSystemInitializer:
             
             logger.log_step("벡터스토어 로드/생성 완료")
             
-            # 5. LLM 관리자 초기화
-            llm_manager = LLMManager()
+            # 5. LLM 관리자 초기화 (config 기반)
+            llm_manager = LLMManager(use_config=use_config)
             logger.log_step("LLM 관리자 초기화 완료")
             
-            # 6. 검색기 관리자 초기화
-            retriever_manager = RetrieverManager(vectorstore=vectorstore)
+            # 6. 검색기 관리자 초기화 (config 기반)
+            retriever_manager = RetrieverManager(vectorstore=vectorstore, use_config=use_config)
             logger.log_step("검색기 관리자 초기화 완료")
             
             # 7. RAG 질의 처리기 초기화

@@ -7,14 +7,18 @@
 1. 벡터스토어 영구 저장/로딩: FAISS 인덱스를 디스크에 저장하고 재시작 시 로드
 2. 파일 변경 감지: PDF 파일의 수정시간과 해시값을 추적하여 변경사항 자동 감지  
 3. 증분 업데이트: 새로운/수정된 파일만 처리하여 벡터스토어를 효율적으로 업데이트
-4. 메타데이터 관리: 파일별 처리 이력을 JSON으로 관리
+4. 삭제 파일 처리: 삭제된 파일의 벡터 데이터를 제거하기 위한 전체 재구성 기능
+5. 메타데이터 관리: 파일별 처리 이력을 JSON으로 관리
 
 사용법:
     from vector_store import VectorStoreManager
     from langchain_upstage import UpstageEmbeddings
     
     embeddings = UpstageEmbeddings(api_key="your_key", model="embedding-query")
-    manager = VectorStoreManager(embeddings=embeddings)
+    # 삭제 시 즉시 재구성 (기본값)
+    manager = VectorStoreManager(embeddings=embeddings, rebuild_on_delete=True)
+    # 또는 삭제 시 재구성하지 않음
+    # manager = VectorStoreManager(embeddings=embeddings, rebuild_on_delete=False)
     vectorstore = manager.get_or_create_vectorstore()
 """
 
@@ -26,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
 from langchain_community.vectorstores import FAISS
-from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_upstage import UpstageEmbeddings
 from .logger import LoggerManager
@@ -40,12 +44,18 @@ class VectorStoreManager:
                  vectorstore_dir: str = "../data/vectorstore",
                  embeddings: Optional[UpstageEmbeddings] = None,
                  chunk_size: int = 1000,
-                 chunk_overlap: int = 50):
+                 chunk_overlap: int = 50,
+                 rebuild_on_delete: bool = True,
+                 delete_threshold: int = 1):
         self.pdf_dir = pdf_dir
         self.vectorstore_dir = vectorstore_dir
         self.embeddings = embeddings
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        
+        # 삭제 파일 처리 옵션
+        self.rebuild_on_delete = rebuild_on_delete  # 삭제 시 즉시 재구성 여부
+        self.delete_threshold = delete_threshold    # 재구성을 위한 삭제 파일 임계값
         
         # 디렉토리 생성
         os.makedirs(self.vectorstore_dir, exist_ok=True)
@@ -216,23 +226,51 @@ class VectorStoreManager:
             log.error(f"벡터스토어 생성 중 오류 발생: {str(e)}")
             return None
     
+    def _rebuild_vectorstore_from_existing_files(self) -> Optional[FAISS]:
+        """현재 존재하는 파일들로부터 벡터스토어를 재구성합니다."""
+        current_files = self._scan_pdf_files()
+        all_files = list(current_files.keys())
+        
+        if not all_files:
+            log.warning("벡터스토어 재구성을 위한 파일이 없습니다.")
+            return None
+        
+        log.info(f"벡터스토어를 재구성합니다. ({len(all_files)} 파일)")
+        return self.create_vectorstore_from_files(all_files)
+    
     def update_vectorstore(self, vectorstore: FAISS, 
                           new_files: List[str], 
                           modified_files: List[str], 
                           deleted_files: List[str]) -> FAISS:
         """벡터스토어를 증분 업데이트합니다."""
-        updated_vectorstore = vectorstore
         
-        # 삭제된 파일의 데이터 제거
+        # 삭제된 파일 처리
         if deleted_files:
-            log.info(f"삭제된 파일 처리 시작: {len(deleted_files)}개")
-            # FAISS는 직접적인 삭제 기능이 제한적이므로, 
-            # 필요시 전체 재구성하는 방식으로 구현할 수 있습니다.
-            # 현재는 로그만 남기고 추후 구현 예정
-            for file_path in deleted_files:
-                log.info(f"삭제된 파일: {file_path} (벡터스토어에서 자동 제거 예정)")
+            log.info(f"삭제된 파일 {len(deleted_files)}개 감지")
+            
+            # 삭제 임계값 확인 및 재구성 여부 결정
+            should_rebuild = (
+                self.rebuild_on_delete and 
+                len(deleted_files) >= self.delete_threshold
+            )
+            
+            if should_rebuild:
+                log.info(f"삭제 임계값({self.delete_threshold})에 도달하여 벡터스토어를 재구성합니다.")
+                # 전체 재구성
+                rebuilt_vectorstore = self._rebuild_vectorstore_from_existing_files()
+                if rebuilt_vectorstore:
+                    vectorstore = rebuilt_vectorstore
+                    log.info("벡터스토어가 성공적으로 재구성되었습니다.")
+                else:
+                    log.error("벡터스토어 재구성에 실패했습니다.")
+                    return vectorstore
+            else:
+                # 재구성하지 않는 경우 경고 메시지
+                for file_path in deleted_files:
+                    log.warning(f"삭제된 파일: {file_path} (벡터 데이터는 남아있음)")
+                log.info("삭제된 파일의 벡터 데이터를 제거하려면 rebuild_on_delete=True로 설정하세요.")
         
-        # 수정된 파일 처리 (기존 데이터 제거 후 새 데이터 추가)
+        # 새로운/수정된 파일 처리
         files_to_add = new_files + modified_files
         
         if files_to_add:
@@ -242,17 +280,21 @@ class VectorStoreManager:
             if new_documents:
                 try:
                     # 새로운 문서들을 기존 벡터스토어에 추가
-                    updated_vectorstore.add_documents(new_documents)
+                    vectorstore.add_documents(new_documents)
                     log.info(f"벡터스토어에 {len(new_documents)} 청크가 추가되었습니다.")
                 except Exception as e:
                     log.error(f"벡터스토어 업데이트 중 오류 발생: {str(e)}")
-                    # 오류 발생 시 새로운 벡터스토어 생성
-                    log.info("새로운 벡터스토어를 생성합니다.")
+                    # 오류 발생 시 새로운 벡터스토어 생성하여 병합
+                    log.info("새로운 벡터스토어를 생성하여 병합합니다.")
                     temp_vectorstore = self.create_vectorstore_from_files(files_to_add)
                     if temp_vectorstore:
-                        updated_vectorstore.merge_from(temp_vectorstore)
+                        try:
+                            vectorstore.merge_from(temp_vectorstore)
+                            log.info("벡터스토어 병합이 완료되었습니다.")
+                        except Exception as merge_error:
+                            log.error(f"벡터스토어 병합 중 오류 발생: {str(merge_error)}")
         
-        return updated_vectorstore
+        return vectorstore
     
     def update_file_metadata(self, processed_files: List[str]):
         """처리된 파일들의 메타데이터를 업데이트합니다."""
@@ -271,6 +313,55 @@ class VectorStoreManager:
         
         self._save_file_metadata(stored_metadata)
         log.info("파일 메타데이터가 업데이트되었습니다.")
+    
+    def get_vectorstore_stats(self) -> Dict[str, any]:
+        """벡터스토어의 통계 정보를 반환합니다."""
+        stats = {
+            "vectorstore_exists": self.vectorstore_exists(),
+            "metadata_file_exists": os.path.exists(self.metadata_file),
+            "pdf_directory_exists": os.path.exists(self.pdf_dir),
+            "total_files_in_metadata": 0,
+            "total_pdf_files": 0,
+            "config": {
+                "rebuild_on_delete": self.rebuild_on_delete,
+                "delete_threshold": self.delete_threshold,
+                "chunk_size": self.chunk_size,
+                "chunk_overlap": self.chunk_overlap
+            }
+        }
+        
+        # 메타데이터 파일 통계
+        metadata = self._get_file_metadata()
+        stats["total_files_in_metadata"] = len(metadata)
+        
+        # 실제 PDF 파일 통계
+        current_files = self._scan_pdf_files()
+        stats["total_pdf_files"] = len(current_files)
+        
+        return stats
+    
+    def force_rebuild_vectorstore(self) -> Optional[FAISS]:
+        """벡터스토어를 강제로 재구성합니다."""
+        log.info("벡터스토어 강제 재구성을 시작합니다.")
+        
+        # 기존 벡터스토어 파일 삭제
+        index_path = os.path.join(self.vectorstore_dir, "index.faiss")
+        pkl_path = os.path.join(self.vectorstore_dir, "index.pkl")
+        
+        for path in [index_path, pkl_path]:
+            if os.path.exists(path):
+                os.remove(path)
+                log.info(f"기존 파일 삭제: {path}")
+        
+        # 새로 생성
+        vectorstore = self._rebuild_vectorstore_from_existing_files()
+        if vectorstore:
+            self.save_vectorstore(vectorstore)
+            current_files = self._scan_pdf_files()
+            self.update_file_metadata(list(current_files.keys()))
+            log.info("벡터스토어 강제 재구성이 완료되었습니다.")
+        
+        return vectorstore
     
     def get_or_create_vectorstore(self) -> Optional[FAISS]:
         """벡터스토어를 가져오거나 새로 생성합니다. 증분 업데이트도 수행합니다."""
