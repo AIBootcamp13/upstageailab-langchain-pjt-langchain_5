@@ -19,4 +19,7 @@ dependencies = [
     "pytest>=8.0.0",
     "ragas>=0.3.2",
     "datasets>=4.0.0",
+    "beautifulsoup4>=4.13.5",
+    "selenium>=4.35.0",
+    "webdriver-manager>=4.0.2",
 ]
