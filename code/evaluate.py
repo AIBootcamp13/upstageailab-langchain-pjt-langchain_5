@@ -53,6 +53,7 @@ from modules import (
     VectorStoreManager, LLMManager, RetrieverManager, 
     ChatHistoryManager, LoggerManager, RAGSystemInitializer
 )
+from modules.config_loader import get_config_loader
 
 
 # 전역 설정
@@ -111,7 +112,6 @@ class RAGEvaluator:
         
         # 메모리 관리자 초기화 (DB 저장 없음, 메모리만 사용) - 모든 질문에 대해 동일한 인스턴스 사용
         try:
-            from modules.config_loader import get_config_loader
             config_loader = get_config_loader()
             db_conf = config_loader.get_database_config()
             memory_k = db_conf.get("memory_window", 3)
@@ -365,20 +365,29 @@ class RAGEvaluator:
             general_questions = len([r for r in results if r.get("processing_type") == "GENERAL"])
             error_questions = len([r for r in results if r.get("processing_type") == "ERROR"])
             
+            # 실제 설정값 가져오기
+            config_loader = get_config_loader()
+            llm_config = config_loader.get_llm_config()
+            embeddings_config = config_loader.get_embeddings_config()
+            vectorstore_config = config_loader.get_vectorstore_config()
+            retriever_config = config_loader.get_retriever_config()
+            
+            model_config = {
+                "router_model": llm_config.get("router", {}).get("model", "solar-pro2"),
+                "rag_llm_model": llm_config.get("rag", {}).get("model", "solar-pro2"),
+                "general_llm_model": llm_config.get("general", {}).get("model", "solar-pro2"),
+                "embedding_model": embeddings_config.get("model", "embedding-query"),
+                "chunk_size": vectorstore_config.get("chunk_size", 1000),
+                "chunk_overlap": vectorstore_config.get("chunk_overlap", 50),
+                "retrieval_k": retriever_config.get("top_k", 5)
+            }
+            
             # 결과 데이터 구성
             evaluation_report = {
                 "metadata": {
                     "timestamp": datetime.now().isoformat(),
                     "dataset_version": dataset["metadata"]["version"],
-                    "model_config": {
-                        "router_model": "solar-1-mini-chat",
-                        "rag_llm_model": "solar-pro2",
-                        "general_llm_model": "solar-1-mini-chat",
-                        "embedding_model": "embedding-query",
-                        "chunk_size": 1000,
-                        "chunk_overlap": 50,
-                        "retrieval_k": 5
-                    },
+                    "model_config": model_config,
                     "evaluation_framework": "RAGAS 0.3.2",
                     "routing_enabled": True
                 },
