@@ -19,6 +19,7 @@ from langchain_core.messages import HumanMessage
 
 from .logger import LoggerManager
 from .prompt_loader import get_prompt_loader
+from .config_loader import get_config_loader
 
 
 class QueryRouter:
@@ -26,18 +27,39 @@ class QueryRouter:
     
     def __init__(self, 
                  api_key: str = None,
-                 router_model: str = "upstage/solar-1-mini-chat",
-                 temperature: float = 0.1):
+                 use_config: bool = True,
+                 router_model: str = None,
+                 temperature: float = None):
         """
         QueryRouter 초기화
         
         Args:
             api_key: Upstage API 키
-            router_model: 라우팅에 사용할 모델
-            temperature: 응답 다양성 (낮을수록 일관성 높음)
+            use_config (bool): config.yaml 사용 여부 (기본: True)
+            router_model: 라우팅에 사용할 모델 (config 우선)
+            temperature: 응답 다양성 (config 우선, 낮을수록 일관성 높음)
         """
         self.logger = LoggerManager("QueryRouter")
         self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
+        
+        # 설정 로드
+        if use_config:
+            try:
+                config_loader = get_config_loader()
+                router_config = config_loader.get_router_config()
+                
+                self.router_model = router_config.get("router_model", router_model or "upstage/solar-1-mini-chat")
+                self.temperature = router_config.get("temperature", temperature or 0.1)
+                
+                self.logger.log_step("Config 기반 Router 설정", 
+                                   f"모델: {self.router_model}, temperature: {self.temperature}")
+            except Exception as e:
+                self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
+                self.router_model = router_model or "upstage/solar-1-mini-chat"
+                self.temperature = temperature or 0.1
+        else:
+            self.router_model = router_model or "upstage/solar-1-mini-chat"
+            self.temperature = temperature or 0.1
         
         if not self.api_key:
             raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
@@ -45,8 +67,8 @@ class QueryRouter:
         # 라우팅용 경량 모델 초기화 (reasoning_effort 제외)
         self.router_llm = ChatUpstage(
             api_key=self.api_key,
-            model=router_model,
-            temperature=temperature
+            model=self.router_model,
+            temperature=self.temperature
         )
         
         # 프롬프트 로더 초기화

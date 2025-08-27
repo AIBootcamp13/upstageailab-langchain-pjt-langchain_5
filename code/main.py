@@ -288,10 +288,11 @@ def format_timestamp_to_kst(timestamp_str):
 
 @st.cache_resource
 def initialize_system():
-    """시스템 초기화 (캐시됨) - 공통 모듈 사용"""
+    """시스템 초기화 (캐시됨) - 공통 모듈 사용 (config 기반)"""
     result = RAGSystemInitializer.initialize_system(
         current_file_path=script_dir,
         include_sql=True,
+        use_config=True,  # config.yaml 사용
         logger_name="StreamlitRAG"
     )
     
@@ -299,9 +300,9 @@ def initialize_system():
         st.error("시스템 초기화에 실패했습니다.")
         return None, None, None, None, None, None
     
-    # 라우터 초기화
+    # 라우터 초기화 (config 기반)
     try:
-        router = QueryRouter()
+        router = QueryRouter(use_config=True)
         return result + (router,)
     except Exception as e:
         st.error(f"라우터 초기화에 실패했습니다: {str(e)}")

@@ -22,10 +22,11 @@ def main():
     # 로거 초기화
     log = LoggerManager("CLI")
     
-    # 1. 시스템 초기화 (RAGQueryProcessor 포함, 메모리 기능 활성화)
+    # 1. 시스템 초기화 (RAGQueryProcessor 포함, 메모리 기능 활성화, config 기반)
     result = RAGSystemInitializer.initialize_system(
         current_file_path=script_dir, 
         include_sql=False, 
+        use_config=True,  # config.yaml 사용
         enable_db_memory=False  # CLI는 메모리만 사용
     )
     if not result: 

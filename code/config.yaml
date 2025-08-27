@@ -1,0 +1,39 @@
+# RAG 시스템 설정 파일
+# 이 파일을 수정하여 모델, 검색 파라미터 등을 조정할 수 있습니다.
+
+# LLM 설정
+llm:
+  main_model: "solar-pro2"       # LLM 메인 모델 (solar-pro2, solar-1-pro, etc.)
+  reasoning_effort: "high"       # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
+  temperature: 0.7               # 응답 다양성 조절 (0.0~1.0)
+  
+# 라우터 설정 (질문 라우팅용)
+router:
+  # model: "upstage/solar-1-mini-chat"  # 라우터 모델 (경량 모델 권장)
+  main_model: "solar-pro2"       # 라우터 모델 (경량 모델 권장)
+  reasoning_effort: "low"        # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
+  temperature: 0.1               # 라우팅 일관성 (낮을수록 일관됨)
+
+# 임베딩 설정
+embeddings:
+  model: "embedding-query"       # 임베딩 모델
+
+# Retriever 설정 (문서 검색)
+retriever:
+  search_type: "similarity"      # 검색 방법: similarity, mmr, similarity_score_threshold
+  top_k: 5                       # 반환할 문서 수 (상위 k개)
+  score_threshold: 0.8           # similarity_score_threshold일 때 최소 점수
+  
+# 벡터스토어 설정
+vectorstore:
+  chunk_size: 1000               # 문서 청크 크기
+  chunk_overlap: 50              # 청크 간 겹치는 부분
+
+# 시스템 로그 설정
+logging:
+  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  
+# 데이터베이스 설정
+database:
+  enable_memory: false           # 대화 메모리 기능 활성화
+  conversation_limit: 20         # 사이드바에 표시할 대화 수

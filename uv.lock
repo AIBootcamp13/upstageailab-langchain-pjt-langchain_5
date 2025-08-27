@@ -3212,6 +3212,7 @@ dependencies = [
     { name = "pytest" },
     { name = "python-dotenv" },
     { name = "pytz" },
+    { name = "pyyaml" },
     { name = "ragas" },
     { name = "streamlit" },
 ]
@@ -3231,6 +3232,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "pytz", specifier = ">=2025.2" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ragas", specifier = ">=0.3.2" },
     { name = "streamlit", specifier = ">=1.39.0" },
 ]

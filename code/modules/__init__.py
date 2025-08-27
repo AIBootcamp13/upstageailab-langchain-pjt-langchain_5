@@ -27,6 +27,7 @@ from .crawler import CrawlerManager
 from .router import QueryRouter
 from .rag_system import RAGSystemInitializer, RAGQueryProcessor
 from .prompt_loader import PromptLoader, get_prompt_loader
+from .config_loader import ConfigLoader, get_config_loader, get_config
 
 __all__ = [
     "SQLManager",
@@ -41,4 +42,7 @@ __all__ = [
     "RAGQueryProcessor",
     "PromptLoader",
     "get_prompt_loader",
+    "ConfigLoader",
+    "get_config_loader",
+    "get_config",
 ]
