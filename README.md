@@ -13,6 +13,11 @@
 
 <br>
 
+
+
+
+
+
 ## 👨‍👩‍👦‍👦 팀 구성원
 
 | ![류지헌](https://avatars.githubusercontent.com/u/10584296?v=4) | ![김태현](https://avatars.githubusercontent.com/u/7031901?v=4) | ![박진섭](https://avatars.githubusercontent.com/u/208775216?v=4) | ![문진숙](https://avatars.githubusercontent.com/u/204665219?v=4) | ![김재덕](https://avatars.githubusercontent.com/u/33456585?v=4) |
@@ -199,12 +204,12 @@ flowchart TD
 - 프롬프트 엔지니어링을 통해 답변의 일관성과 사실성을 개선했습니다. 실패 사례를 빠르게 수집·학습하여 템플릿과 컨텍스트 구성 규칙을 정리한 것이 큰 성과였습니다.
 
 #### 김재덕
-- API 통합과 배포 파이프라인을 정비하며 환경 차이로 인한 오류를 줄였습니다. 설정 관리와 실행 가이드를 문서화해 온보딩 시간을 단축할 수 있었습니다.
+- 프로젝트 전반의 API 통합과 배포 파이프라인 환경 차이로 인한 버그 최소화하여 재현 가능한 실행 가능 환경 구축을 위해 노력했습니다. 설정 관리와 온보딩 가이드를 문서화해 온보딩 시간을 단축할 수 있었던 것 같습니다.
 
 
 
 ## 📰​ 참고자료
-- _참고자료를 첨부해주세요_
+- [Q-NET 제과기능사](https://www.q-net.or.kr/crf005.do?id=crf00503&jmCd=7892)
 
 ---
 
