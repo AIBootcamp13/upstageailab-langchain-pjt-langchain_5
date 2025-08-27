@@ -221,6 +221,7 @@ class LLMManager:
             )
             
             # 일반답변용 LLM 호출
+            self.logger.log_step("일반답변용 LLM 호출", f"모델: {self.general_model}")
             response = self.general_llm.invoke(formatted_prompt)
             
             self.logger.log_function_end("generate_general_response", "일반답변 생성 완료")
@@ -289,6 +290,7 @@ class LLMManager:
                 )
             
             # RAG용 LLM 호출
+            self.logger.log_step("RAG용 LLM 호출", f"모델: {self.rag_model}")
             response = self.rag_llm.invoke(formatted_prompt)
             
             self.logger.log_function_end("generate_rag_response", "RAG 답변 생성 완료")
@@ -375,6 +377,7 @@ class LLMManager:
                 )
             
             # 스트리밍 응답
+            self.logger.log_step("RAG용 LLM 스트리밍 호출", f"모델: {self.rag_model}")
             for chunk in self.rag_llm.stream(formatted_prompt):
                 if chunk.content:
                     yield chunk.content

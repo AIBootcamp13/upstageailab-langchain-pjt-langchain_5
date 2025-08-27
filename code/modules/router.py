@@ -108,6 +108,7 @@ class QueryRouter:
             messages = classification_prompt.format_messages(question=question)
             
             # LLM 호출
+            self.logger.log_step("라우터용 LLM 호출", f"모델: {self.router_model}")
             response = self.router_llm.invoke(messages)
             response_text = response.content.strip()
             

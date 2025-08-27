@@ -219,6 +219,9 @@ class VectorStoreManager:
             return None
         
         try:
+            # 임베딩 모델명 로그 출력
+            embedding_model = getattr(self.embeddings, 'model', 'unknown')
+            log.info(f"임베딩 API 호출 - 모델: {embedding_model}")
             vectorstore = FAISS.from_documents(documents, self.embeddings)
             log.info(f"벡터스토어가 생성되었습니다. ({len(documents)} 청크)")
             return vectorstore
@@ -279,6 +282,9 @@ class VectorStoreManager:
             
             if new_documents:
                 try:
+                    # 임베딩 모델명 로그 출력
+                    embedding_model = getattr(self.embeddings, 'model', 'unknown')
+                    log.info(f"임베딩 API 호출 - 모델: {embedding_model}")
                     # 새로운 문서들을 기존 벡터스토어에 추가
                     vectorstore.add_documents(new_documents)
                     log.info(f"벡터스토어에 {len(new_documents)} 청크가 추가되었습니다.")
