@@ -294,7 +294,8 @@ def initialize_system():
         current_file_path=script_dir,
         include_sql=True,
         use_config=True,  # config.yaml 사용
-        logger_name="StreamlitRAG"
+        logger_name="StreamlitRAG",
+        enable_db_memory=False  # WebUI에서는 개별 세션별로 ChatHistoryManager 관리
     )
     
     if result is None:

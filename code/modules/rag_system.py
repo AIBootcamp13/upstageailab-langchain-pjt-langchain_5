@@ -243,8 +243,8 @@ class RAGQueryProcessor:
                 memory_k=memory_k
             )
         else:
-            # 메모리 기반만 (CLI용)
-            # 설정에서 메모리 윈도우 크기를 불러와 주입 (CLI용도 동일 적용)
+            # CLI/평가용: 메모리 기반만 사용 (세션별 관리 없음)
+            # 설정에서 메모리 윈도우 크기를 불러와 주입
             try:
                 config_loader = get_config_loader()
                 db_conf = config_loader.get_database_config()

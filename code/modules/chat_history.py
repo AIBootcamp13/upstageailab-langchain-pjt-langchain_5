@@ -30,29 +30,35 @@ class ChatHistoryManager:
         ChatHistoryManager 초기화
         
         Args:
-            session_id (str, optional): 세션 ID. None이면 새 세션 생성
+            session_id (str, optional): 세션 ID. None이면 새 세션 생성 (sql_manager가 있을 때만)
             memory_k (int): 메모리에 보관할 최근 대화 수
-            sql_manager (SQLManager, optional): SQL 관리자
+            sql_manager (SQLManager, optional): SQL 관리자. None이면 메모리만 사용
             auto_save (bool): 자동 저장 여부
         """
         self.logger = LoggerManager("ChatHistory")
         self.memory_k = memory_k
-        self.sql_manager = sql_manager or SQLManager()
+        self.sql_manager = sql_manager
         self.auto_save = auto_save
         
         # 세션 ID 설정
         if session_id:
             self.session_id = session_id
             self.logger.log_step("기존 세션 로드", f"세션 ID: {session_id}")
-        else:
+        elif self.sql_manager:
+            # SQL 관리자가 있을 때만 새 세션 생성
             self.session_id = self.sql_manager.create_conversation()
             self.logger.log_step("새 세션 생성", f"세션 ID: {self.session_id}")
+        else:
+            # 메모리만 사용하는 경우 (CLI/평가용)
+            self.session_id = None
+            self.logger.log_step("메모리 전용 모드", "세션 ID 없음")
         
         # 메모리 초기화
         self._init_memory()
         
-        # 기존 채팅 히스토리 로드
-        self._load_chat_history()
+        # 기존 채팅 히스토리 로드 (SQL 관리자가 있을 때만)
+        if self.sql_manager and self.session_id:
+            self._load_chat_history()
         
         self.logger.log_success("Chat History Manager 초기화 완료")
     
@@ -72,6 +78,9 @@ class ChatHistoryManager:
     
     def _load_chat_history(self):
         """SQLite에서 채팅 히스토리 로드"""
+        if not self.sql_manager or not self.session_id:
+            return
+            
         try:
             # 최근 메시지들을 메모리에 로드 (memory_k * 2개, 즉 대화 쌍 기준)
             recent_messages = self.sql_manager.get_recent_messages(
@@ -110,9 +119,9 @@ class ChatHistoryManager:
         self.logger.log_function_start("add_user_message")
         
         try:
-            # SQLite에 저장 (auto_save가 True인 경우)
+            # SQLite에 저장 (auto_save가 True이고 SQL 관리자가 있는 경우)
             message_id = None
-            if self.auto_save:
+            if self.auto_save and self.sql_manager and self.session_id:
                 message_id = self.sql_manager.add_message(
                     self.session_id, "user", message
                 )
@@ -145,9 +154,9 @@ class ChatHistoryManager:
                 metadata["sources"] = sources
                 self.logger.log_step("소스 정보 추가", f"{len(sources)}개 소스")
             
-            # SQLite에 저장 (auto_save가 True인 경우)
+            # SQLite에 저장 (auto_save가 True이고 SQL 관리자가 있는 경우)
             message_id = None
-            if self.auto_save:
+            if self.auto_save and self.sql_manager and self.session_id:
                 message_id = self.sql_manager.add_message(
                     self.session_id, "assistant", message, metadata if metadata else None
                 )
@@ -216,7 +225,12 @@ class ChatHistoryManager:
             List[Dict]: 전체 메시지 리스트
         """
         try:
-            return self.sql_manager.get_messages(self.session_id)
+            if self.sql_manager and self.session_id:
+                return self.sql_manager.get_messages(self.session_id)
+            else:
+                # 메모리 전용 모드: 메모리에서 가져오기
+                memory_messages = self.get_chat_history_as_dicts()
+                return memory_messages
         except Exception as e:
             self.logger.log_error("get_full_conversation_history", e)
             return []
