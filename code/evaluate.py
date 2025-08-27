@@ -294,7 +294,10 @@ class RAGEvaluator:
             return scores
             
         except Exception as e:
-            self.logger.log_error("run_ragas_evaluation", e)
+            import traceback
+            self.logger.error(f"RAGAS 평가 중 심각한 오류 발생: {e}")
+            self.logger.error(f"오류 타입: {type(e)}")
+            self.logger.error(f"상세 트레이스백: {traceback.format_exc()}")
             # 평가 실패 시 기본값 반환
             return {
                 "faithfulness": 0.0,
