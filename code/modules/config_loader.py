@@ -95,7 +95,6 @@ class ConfigLoader:
                 "level": "INFO"
             },
             "database": {
-                "enable_memory": False,
                 "conversation_limit": 20,
                 "memory_window": 3
             }
@@ -233,7 +232,6 @@ class ConfigLoader:
     def get_database_config(self) -> Dict[str, Any]:
         """데이터베이스 설정 반환"""
         return {
-            "enable_memory": self.get_config("database", "enable_memory"),
             "conversation_limit": self.get_config("database", "conversation_limit"),
             "memory_window": self.get_config("database", "memory_window")
         }
