@@ -96,7 +96,6 @@ uv add 패키지명
 │   │   ├── llm.py           # LLM 관리
 │   │   ├── retriever.py     # 문서 검색 관리
 │   │   ├── chat_history.py  # 채팅 히스토리 관리
-│   │   └── crawler.py       # 문서 로딩 관리
 │   ├── tests/               # pytest 테스트 코드
 │   ├── utils/               # 유틸리티 함수
 │   ├── main.py              # Streamlit WebUI

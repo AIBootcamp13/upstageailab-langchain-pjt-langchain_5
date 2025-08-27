@@ -10,7 +10,6 @@
 - test_llm.py: LLMManager 테스트
 - test_retriever.py: RetrieverManager 테스트
 - test_chat_history.py: ChatHistoryManager 테스트
-- test_crawler.py: CrawlerManager 테스트
 
 실행 방법:
 - 전체 테스트: pytest code/tests/
