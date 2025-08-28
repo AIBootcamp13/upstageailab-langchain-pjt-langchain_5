@@ -200,27 +200,50 @@ flowchart TD
     C --> D[Upstage Embeddings<br/>embedding-query]
     D --> E[FAISS 벡터 저장소]
     
-    F[사용자 질문(제과제빵)] --> G[질문 임베딩<br/>Upstage Embeddings]
-    G --> H[유사도 검색<br/>FAISS Retriever]
-    E --> H
-    H --> I[관련 문서 검색<br/>Top-K 문서 반환]
+    F[사용자 질문] --> G[QueryRouter<br/>제빵 관련 지식 여부 판단]
+    G -->|제빵 관련| G1[제빵 관련 지식 질문]
+    G -->|일반 지식| G2[일반 지식 질문]
     
-    I --> J[프롬프트 템플릿<br/>질문 + 컨텍스트]
-    J --> K[Upstage Chat API (solar-pro2)<br/>답변 생성]
-    K --> L[한국어 답변 + 출처]
+    G1 --> H1[질문 임베딩<br/>Upstage Embeddings]
+    G2 --> H2[일반 LLM 응답<br/>Upstage Chat API]
+    
+    H1 --> I1[유사도 검색<br/>FAISS Retriever<br/>제빵 전문 컨텍스트]
+    E --> I1
+    
+    I1 --> J1[프롬프트 템플릿<br/>제빵 전문가용]
+    J1 --> K1[Upstage Chat API solar-pro2<br/>RAG 기반 제빵 답변 생성]
+    
+    H2 --> K2[일반 지식 답변 생성]
+    
+    K1 --> L1[RAG 기반 제빵 답변 + 출처]
+    K2 --> L2[일반 지식 답변]
     
     style A fill:#e1f5fe
     style F fill:#e8f5e8
-    style L fill:#fff3e0
+    style G fill:#ffeb3b
+    style G1 fill:#4caf50
+    style G2 fill:#ff9800
+    style L1 fill:#fff3e0
+    style L2 fill:#fff3e0
     style E fill:#f3e5f5
-    style K fill:#fce4ec
+    style K1 fill:#fce4ec
+    style K2 fill:#e3f2fd
 ```
 
 ### 주요 처리 단계
 1. **문서 전처리**: PDF → 텍스트 추출 → 청크 분할
 2. **벡터화**: 텍스트 청크 → 임베딩 벡터 → FAISS 인덱스
-3. **검색**: 질문 임베딩 → 유사도 검색 → 관련 문서 추출  
-4. **생성**: 질문 + 컨텍스트 → LLM → 최종 답변
+3. **라우팅**: 질문 유형 분석 → 적절한 처리 경로 선택
+4. **검색**: 질문 임베딩 → 유사도 검색 → 관련 문서 추출  
+5. **생성**: 질문 + 컨텍스트 → LLM → 최종 답변
+
+### 라우팅 시스템 특징
+- **QueryRouter**: 사용자 질문이 제빵 관련 지식인지 일반 지식인지 판단하여 적절한 처리 경로로 라우팅
+- **이중 경로 처리**: 
+  - **제빵 관련 지식**: RAG 파이프라인을 통한 전문적이고 정확한 답변 생성
+  - **일반 지식**: LLM의 일반적인 지식을 활용한 답변 생성
+- **효율적 리소스 활용**: 제빵 관련 질문에만 벡터 검색 및 RAG 파이프라인 적용
+- **사용자 경험 최적화**: 질문 유형에 맞는 적절한 응답 방식으로 만족도 향상
 
 <br>
 
