@@ -565,9 +565,6 @@ def render_chat_interface(query_processor):
     user_input = st.chat_input("제빵에 관한 질문을 입력하세요...")
     
     if user_input and st.session_state.chat_history_manager:
-        # 사용자 메시지 추가
-        st.session_state.chat_history_manager.add_user_message(user_input)
-        
         # 통합 질의 처리 (라우팅 + 분기 + 메모리)
         with st.spinner("질문을 분석하고 답변을 준비하는 중..."):
             try:
