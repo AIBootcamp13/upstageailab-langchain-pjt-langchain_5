@@ -19,6 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_upstage import ChatUpstage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_upstage import UpstageEmbeddings
 
 from .logger import LoggerManager
@@ -39,6 +40,8 @@ class LLMManager:
         self.logger = LoggerManager("LLM")
         self.upstage_api_key = os.getenv("UPSTAGE_API_KEY")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL")
         
         if use_config:
             try:
@@ -96,6 +99,20 @@ class LLMManager:
             if "solar-pro2" in model_name.lower() and reasoning_effort:
                 params["reasoning_effort"] = reasoning_effort
             return ChatUpstage(**params)
+        
+        elif provider == "openai":
+            if not self.openai_api_key:
+                raise ValueError(f"{role}에 openai provider를 사용하려면 OPENAI_API_KEY가 필요합니다.")
+            
+            params = {
+                "model": model_name,
+                "temperature": temperature,
+                "api_key": self.openai_api_key
+            }
+            if self.openai_base_url:
+                params["base_url"] = self.openai_base_url
+            
+            return ChatOpenAI(**params)
 
         else:
             raise ValueError(f"지원하지 않는 LLM provider입니다: {provider}")
@@ -203,7 +220,7 @@ class LLMManager:
             )
             
             # 일반답변용 LLM 호출
-            self.logger.log_step("일반답변용 LLM 호출", f"모델: {self.general_model}")
+            self.logger.log_step("일반답변용 LLM 호출", f"모델: {self.llm_config['general']['model']}")
             response = self.general_llm.invoke(formatted_prompt)
             
             self.logger.log_function_end("generate_general_response", "일반답변 생성 완료")
@@ -272,7 +289,7 @@ class LLMManager:
                 )
             
             # RAG용 LLM 호출
-            self.logger.log_step("RAG용 LLM 호출", f"모델: {self.rag_model}")
+            self.logger.log_step("RAG용 LLM 호출", f"모델: {self.llm_config['rag']['model']}")
             response = self.rag_llm.invoke(formatted_prompt)
             
             self.logger.log_function_end("generate_rag_response", "RAG 답변 생성 완료")
@@ -359,7 +376,7 @@ class LLMManager:
                 )
             
             # 스트리밍 응답
-            self.logger.log_step("RAG용 LLM 스트리밍 호출", f"모델: {self.rag_model}")
+            self.logger.log_step("RAG용 LLM 스트리밍 호출", f"모델: {self.llm_config['rag']['model']}")
             for chunk in self.rag_llm.stream(formatted_prompt):
                 if chunk.content:
                     yield chunk.content
@@ -373,20 +390,10 @@ class LLMManager:
     def get_model_info(self) -> Dict[str, Any]:
         """현재 모델 정보 반환"""
         return {
-            "router": {
-                "model": self.router_model,
-                "temperature": self.router_temperature
-            },
-            "general": {
-                "model": self.general_model,
-                "temperature": self.general_temperature
-            },
-            "rag": {
-                "model": self.rag_model,
-                "temperature": self.rag_temperature,
-                "reasoning_effort": self.rag_reasoning_effort
-            },
-            "api_key_set": bool(self.api_key)
+            "router": self.llm_config.get("router"),
+            "general": self.llm_config.get("general"),
+            "rag": self.llm_config.get("rag"),
+            "api_key_set": bool(self.upstage_api_key or self.google_api_key or self.openai_api_key)
         }
     
     def validate_api_connection(self) -> bool:
@@ -398,3 +405,64 @@ class LLMManager:
         except Exception as e:
             self.logger.log_error("API 연결 확인", e)
             return False
+
+    def get_embedding_model(self) -> UpstageEmbeddings:
+        """임베딩 모델 인스턴스 반환"""
+        try:
+            config_loader = get_config_loader()
+            embedding_config = config_loader.get_embedding_config()
+            provider = embedding_config.get("provider", "upstage")
+            model_name = embedding_config.get("model")
+
+            self.logger.log_step("임베딩 모델 생성", f"Provider: {provider}, Model: {model_name}")
+
+            if provider == "upstage":
+                if not self.upstage_api_key:
+                    raise ValueError("upstage provider를 사용하려면 UPSTAGE_API_KEY가 필요합니다.")
+                return UpstageEmbeddings(api_key=self.upstage_api_key, model=model_name)
+            
+            # TODO: Google 임베딩 모델 추가
+            # elif provider == "google":
+            #     if not self.google_api_key:
+            #         raise ValueError("google provider를 사용하려면 GOOGLE_API_KEY가 필요합니다.")
+            #     return GoogleGenerativeAIEmbeddings(model=model_name, google_api_key=self.google_api_key)
+            
+            else:
+                raise ValueError(f"지원하지 않는 임베딩 provider입니다: {provider}")
+        except Exception as e:
+            self.logger.log_error("임베딩 모델 생성 실패", e)
+            raise
+
+if __name__ == '__main__':
+    # 테스트 코드
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    llm_manager = LLMManager()
+    
+    # 일반 답변 테스트
+    # general_response = llm_manager.generate_general_response("오늘 날씨 어때?")
+    # print(f"일반 답변: {general_response}")
+    
+    # RAG 답변 테스트
+    context = "2024년 7월 25일 서울의 날씨는 맑음입니다."
+    rag_response = llm_manager.generate_rag_response("오늘 날씨 어때?", context=context)
+    print(f"RAG 답변: {rag_response}")
+    
+    # 스트리밍 RAG 답변 테스트
+    # print("스트리밍 RAG 답변:")
+    # for chunk in llm_manager.generate_response_stream("오늘 날씨 어때?", context=context):
+    #     print(chunk, end="")
+    # print()
+    
+    # 모델 정보 확인
+    # print(f"모델 정보: {llm_manager.get_model_info()}")
+    
+    # API 연결 확인
+    # print(f"API 연결 상태: {llm_manager.validate_api_connection()}")
+    
+    # 임베딩 모델 확인
+    # embedding_model = llm_manager.get_embedding_model()
+    # print(f"임베딩 모델: {embedding_model}")
+    # query_result = embedding_model.embed_query("테스트 문장")
+    # print(f"임베딩 결과 (일부): {query_result[:5]}")
