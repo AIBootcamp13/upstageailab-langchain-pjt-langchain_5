@@ -426,38 +426,47 @@ def render_sidebar(sql_manager):
         
         try:
             conversations = sql_manager.get_conversations(limit=20)
-            
             if conversations:
                 for conv in conversations:
                     session_id = conv["session_id"]
-                    title = conv["title"]
                     updated_at = conv["updated_at"]
                     message_count = conv["message_count"]
-                    
-                    # 현재 선택된 대화 표시
+
+                    # 첫 질문으로 제목 대체 (12자 초과 시 말줄임)
+                    chat_manager = ChatHistoryManager(session_id=session_id, sql_manager=sql_manager)
+                    messages = chat_manager.get_full_conversation_history()
+                    first_question = next((m["content"] for m in messages if m["role"] == "user"), None)
+                    if first_question and len(first_question) > 12:
+                        title = first_question[:12] + "..."
+                    elif first_question:
+                        title = first_question
+                    else:
+                        title = "새 질문"
+
                     is_current = (st.session_state.current_session_id == session_id)
-                    button_label = f"{'🔵' if is_current else '⚪'} {title}"
-                    
-                    # 대화 제목과 삭제 버튼을 나란히 배치
+
+
+                    # 버튼 텍스트는 제목만 표시
+                    button_text = f"{'🔵' if is_current else '⚪'} {title}"
+
                     col1, col2 = st.columns([4, 1])
-                    
                     with col1:
                         if st.button(
-                            button_label, 
+                            button_text,
                             key=f"conv_{session_id}",
                             help=f"메시지: {message_count}개, 업데이트: {format_timestamp_to_kst(updated_at)}",
                             use_container_width=True
                         ):
                             if not is_current:
                                 load_conversation(session_id, sql_manager)
-                    
+                        # 날짜/시간을 버튼 바로 아래 우측에 아주 작게 표시 (margin-top 조정)
+                        st.markdown(f"<div style='text-align:right;font-size:0.7em;color:#888;margin-top:-15px;'>{format_timestamp_to_kst(updated_at)}</div>", unsafe_allow_html=True)
+
                     with col2:
-                        # 삭제 확인 상태 관리
                         confirm_key = f"confirm_delete_{session_id}"
                         if confirm_key not in st.session_state:
                             st.session_state[confirm_key] = False
-                        
-                        # 삭제 버튼 또는 확인 버튼 표시
+
                         if not st.session_state[confirm_key]:
                             if st.button(
                                 "🗑️", 
@@ -468,9 +477,7 @@ def render_sidebar(sql_manager):
                                 st.session_state[confirm_key] = True
                                 st.rerun()
                         else:
-                            # 확인/취소 버튼을 위한 하위 컬럼
                             subcol1, subcol2 = st.columns(2)
-                            
                             with subcol1:
                                 if st.button(
                                     "✓", 
@@ -481,7 +488,6 @@ def render_sidebar(sql_manager):
                                 ):
                                     st.session_state[confirm_key] = False
                                     delete_conversation_by_id(session_id, sql_manager)
-                            
                             with subcol2:
                                 if st.button(
                                     "✕", 
@@ -517,6 +523,17 @@ def render_sidebar(sql_manager):
                 summary = st.session_state.chat_history_manager.get_conversation_summary()
                 st.write(f"**전체 메시지:** {summary.get('total_messages', 0)}개")
                 st.write(f"**메모리 메시지:** {summary.get('memory_messages', 0)}개")
+                # 첫 질문으로 제목 대체 (최소 10자)
+                if title == "새 대화" or not title or len(title) < 10:
+                    chat_manager = ChatHistoryManager(session_id=session_id, sql_manager=sql_manager)
+                    messages = chat_manager.get_full_conversation_history()
+                    first_question = next((m["content"] for m in messages if m["role"] == "user"), None)
+                    if first_question and len(first_question) >= 10:
+                        title = first_question[:40] + ("..." if len(first_question) > 40 else "")
+                    elif first_question:
+                        title = first_question
+                    else:
+                        title = "새 질문"
 
 
 def render_chat_interface(query_processor):
@@ -566,6 +583,12 @@ def render_chat_interface(query_processor):
     
     if user_input and st.session_state.chat_history_manager:
         # 통합 질의 처리 (라우팅 + 분기 + 메모리)
+        st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #f7f3e9 0%, #f0e6d6 100%); border-radius: 0.8rem; box-shadow: 0 2px 4px rgba(0,0,0,0.08); padding: 1rem; margin-bottom: 1rem; color: #8b4513; border-left: 4px solid #d4aa7d;'>
+                <div style='font-weight:bold; margin-bottom:0.5rem; color:#8b4513;'>질문</div>
+                <div style='font-size:1.1em;'>{user_input}</div>
+            </div>
+            """, unsafe_allow_html=True)
         with st.spinner("질문을 분석하고 답변을 준비하는 중..."):
             try:
                 result = query_processor.unified_query(
