@@ -431,17 +431,15 @@ def render_sidebar(sql_manager):
                     session_id = conv["session_id"]
                     updated_at = conv["updated_at"]
                     message_count = conv["message_count"]
+                    first_question = conv.get("first_user_message")
 
                     # 첫 질문으로 제목 대체 (12자 초과 시 말줄임)
-                    chat_manager = ChatHistoryManager(session_id=session_id, sql_manager=sql_manager)
-                    messages = chat_manager.get_full_conversation_history()
-                    first_question = next((m["content"] for m in messages if m["role"] == "user"), None)
                     if first_question and len(first_question) > 12:
                         title = first_question[:12] + "..."
                     elif first_question:
                         title = first_question
                     else:
-                        title = "새 질문"
+                        title = conv.get("title", "새 질문")
 
                     is_current = (st.session_state.current_session_id == session_id)
 
@@ -523,17 +521,7 @@ def render_sidebar(sql_manager):
                 summary = st.session_state.chat_history_manager.get_conversation_summary()
                 st.write(f"**전체 메시지:** {summary.get('total_messages', 0)}개")
                 st.write(f"**메모리 메시지:** {summary.get('memory_messages', 0)}개")
-                # 첫 질문으로 제목 대체 (최소 10자)
-                if title == "새 대화" or not title or len(title) < 10:
-                    chat_manager = ChatHistoryManager(session_id=session_id, sql_manager=sql_manager)
-                    messages = chat_manager.get_full_conversation_history()
-                    first_question = next((m["content"] for m in messages if m["role"] == "user"), None)
-                    if first_question and len(first_question) >= 10:
-                        title = first_question[:40] + ("..." if len(first_question) > 40 else "")
-                    elif first_question:
-                        title = first_question
-                    else:
-                        title = "새 질문"
+                
 
 
 def render_chat_interface(query_processor):

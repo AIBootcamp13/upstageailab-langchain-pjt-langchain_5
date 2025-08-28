@@ -97,9 +97,7 @@ class SQLManager:
         session_id = str(uuid.uuid4())
         
         if title is None:
-            seoul_tz = pytz.timezone('Asia/Seoul')
-            now_seoul = datetime.now(seoul_tz)
-            title = f"새 대화 {now_seoul.strftime('%Y-%m-%d %H:%M')}"
+            title = "새 질문"
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -222,10 +220,21 @@ class SQLManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT session_id, title, created_at, updated_at,
-                       (SELECT COUNT(*) FROM messages WHERE conversation_id = conversations.id) as message_count
-                FROM conversations
-                ORDER BY updated_at DESC
+                SELECT
+                    c.session_id,
+                    c.title,
+                    c.created_at,
+                    c.updated_at,
+                    (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count,
+                    (
+                        SELECT content
+                        FROM messages
+                        WHERE conversation_id = c.id AND role = 'user'
+                        ORDER BY timestamp ASC
+                        LIMIT 1
+                    ) as first_user_message
+                FROM conversations c
+                ORDER BY c.updated_at DESC
                 LIMIT ?
             """, (limit,))
             
@@ -237,7 +246,8 @@ class SQLManager:
                     "title": row[1],
                     "created_at": row[2],
                     "updated_at": row[3],
-                    "message_count": row[4]
+                    "message_count": row[4],
+                    "first_user_message": row[5]
                 }
                 conversations.append(conversation)
             
