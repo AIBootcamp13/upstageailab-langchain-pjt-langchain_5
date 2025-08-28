@@ -246,23 +246,30 @@ class RAGEvaluator:
             # Dataset 객체 생성
             dataset = Dataset.from_dict(dataset_dict)
             
-            self.logger.log_step("RAGAS 평가 실행", "메트릭: faithfulness, answer_relevancy, context_recall, answer_correctness (Upstage API 사용)")
+            self.logger.log_step("RAGAS 평가 실행", "메트릭: faithfulness, answer_relevancy, context_recall, answer_correctness (LangChain rate limit 설정 활용)")
             
             # baseline.py 방식으로 Upstage 모델 직접 사용
             from langchain_upstage import ChatUpstage, UpstageEmbeddings
             
+            # LangChain rate limit 방지 설정을 포함한 모델 초기화
             upstage_llm = ChatUpstage(
                 api_key=os.getenv("UPSTAGE_API_KEY"),
                 model="solar-pro2",
-                reasoning_effort="high"
+                reasoning_effort="low",
+                # Rate limit 방지 설정
+                request_timeout=60,  # 요청 타임아웃 60초 (증가)
+                max_retries=10       # 최대 재시도 10회 (증가)
             )
             
             upstage_embeddings = UpstageEmbeddings(
                 api_key=os.getenv("UPSTAGE_API_KEY"),
-                model="embedding-query"
+                model="embedding-query",
+                # Rate limit 방지 설정
+                request_timeout=60,   # 요청 타임아웃 60초 (증가)
+                max_retries=10        # 최대 재시도 10회 (증가)
             )
             
-            # RAGAS 평가 실행 (baseline.py와 동일한 Upstage 모델 사용)
+            # RAGAS 평가 실행 (전체 데이터셋을 한 번에 처리, LangChain rate limit 설정 활용)
             evaluation_result = evaluate(
                 dataset=dataset,
                 metrics=[faithfulness, answer_relevancy, context_recall, answer_correctness],
@@ -270,7 +277,7 @@ class RAGEvaluator:
                 embeddings=upstage_embeddings
             )
             
-            # 결과를 딕셔너리로 변환 (baseline.py 방식으로 수정)
+            # 결과를 딕셔너리로 변환
             scores = {}
             scores_dict = evaluation_result._scores_dict
             
@@ -464,7 +471,7 @@ class RAGEvaluator:
             
             # latest.json 심볼릭 링크 업데이트
             latest_path = self.results_dir / "latest.json"
-            if latest_path.exists():
+            if latest_path.exists() or latest_path.is_symlink():
                 latest_path.unlink()
             
             # 상대 경로로 심볼릭 링크 생성
