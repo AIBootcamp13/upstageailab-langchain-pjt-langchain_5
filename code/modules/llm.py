@@ -169,7 +169,7 @@ class LLMManager:
             messages.append(MessagesPlaceholder(variable_name="chat_history"))
         
         # 사용자 메시지
-        messages.append(("human", "{{question}}"))
+        messages.append(("human", "{question}"))
         
         return ChatPromptTemplate.from_messages(messages)
     
@@ -221,7 +221,7 @@ class LLMManager:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{{question}}")
+                ("human", "{question}")
             ])
             
             # 프롬프트 포맷팅
@@ -300,7 +300,7 @@ class LLMManager:
                 default_prompt = ChatPromptTemplate.from_messages([
                     ("system", system_prompt),
                     MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{{question}}")
+                    ("human", "{question}")
                 ])
                 
                 # 프롬프트 포맷팅
@@ -399,7 +399,7 @@ class LLMManager:
                 default_prompt = ChatPromptTemplate.from_messages([
                     ("system", system_prompt),
                     MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{{question}}")
+                    ("human", "{question}")
                 ])
                 
                 # 프롬프트 포맷팅
