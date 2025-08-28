@@ -46,12 +46,14 @@ class VectorStoreManager:
                  chunk_size: int = 1000,
                  chunk_overlap: int = 50,
                  rebuild_on_delete: bool = True,
-                 delete_threshold: int = 1):
+                 delete_threshold: int = 1,
+                 include_filename_in_chunk: bool = True):
         self.pdf_dir = pdf_dir
         self.vectorstore_dir = vectorstore_dir
         self.embeddings = embeddings
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.include_filename_in_chunk = include_filename_in_chunk
         
         # 삭제 파일 처리 옵션
         self.rebuild_on_delete = rebuild_on_delete  # 삭제 시 즉시 재구성 여부
@@ -165,6 +167,27 @@ class VectorStoreManager:
                     doc.metadata["source_file"] = file_path
                 
                 split_docs = self.text_splitter.split_documents(docs)
+                
+                # 파일명을 청크 내용 앞에 추가하는 기능
+                if self.include_filename_in_chunk:
+                    # 상위 폴더명까지 포함한 파일명 생성
+                    path_parts = file_path.split('/')
+                    if len(path_parts) > 1:
+                        # 상위 폴더명/파일명 형태로 표시
+                        display_filename = f"{path_parts[-2]}/{path_parts[-1]}"
+                    else:
+                        display_filename = file_path
+                    
+                    # 각 청크의 내용 앞에 파일명 추가
+                    for i, doc in enumerate(split_docs):
+                        original_content = doc.page_content
+                        doc.page_content = f"[출처: {display_filename}]\n\n{original_content}"
+                        
+                        # 디버깅을 위한 로그 출력
+                        log.info(f"청크 {i+1}/{len(split_docs)} - 파일: {display_filename}")
+                        # log.info(f"청크 내용 미리보기: {doc.page_content[:1000]}...")
+                        log.info(f"청크 내용 미리보기: {doc.page_content}...")
+                
                 all_documents.extend(split_docs)
                 
                 log.info(f"파일 처리 완료: {file_path} ({len(split_docs)} 청크)")
@@ -332,7 +355,8 @@ class VectorStoreManager:
                 "rebuild_on_delete": self.rebuild_on_delete,
                 "delete_threshold": self.delete_threshold,
                 "chunk_size": self.chunk_size,
-                "chunk_overlap": self.chunk_overlap
+                "chunk_overlap": self.chunk_overlap,
+                "include_filename_in_chunk": self.include_filename_in_chunk
             }
         }
         

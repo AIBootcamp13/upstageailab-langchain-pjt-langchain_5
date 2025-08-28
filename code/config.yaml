@@ -41,6 +41,7 @@ retriever:
 vectorstore:
   chunk_size: 1000               # 문서 청크 크기
   chunk_overlap: 50              # 청크 간 겹치는 부분
+  include_filename_in_chunk: true # 청크 내용 앞에 파일명 포함 여부
 
 # 시스템 로그 설정
 logging:

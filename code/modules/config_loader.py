@@ -95,7 +95,8 @@ class ConfigLoader:
             },
             "vectorstore": {
                 "chunk_size": 1000,
-                "chunk_overlap": 50
+                "chunk_overlap": 50,
+                "include_filename_in_chunk": True
             },
             "logging": {
                 "level": "INFO"
@@ -228,7 +229,8 @@ class ConfigLoader:
         """벡터스토어 설정 반환"""
         return {
             "chunk_size": self.get_config("vectorstore", "chunk_size"),
-            "chunk_overlap": self.get_config("vectorstore", "chunk_overlap")
+            "chunk_overlap": self.get_config("vectorstore", "chunk_overlap"),
+            "include_filename_in_chunk": self.get_config("vectorstore", "include_filename_in_chunk")
         }
     
     def get_database_config(self) -> Dict[str, Any]:
@@ -283,6 +285,7 @@ RAG Reasoning Effort: {llm_config['rag'].get('reasoning_effort', '사용안함')
 검색 방법: {retriever_config['search_type']}
 상위 K개 문서: {retriever_config['k']}
 청크 크기: {self.get_config('vectorstore', 'chunk_size')}
+청크에 파일명 포함: {self.get_config('vectorstore', 'include_filename_in_chunk')}
 설정 파일: {self.config_path}
         """.strip()
         

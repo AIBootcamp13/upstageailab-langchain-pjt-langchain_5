@@ -120,19 +120,23 @@ class RAGSystemInitializer:
                 
                 chunk_size = vectorstore_config.get("chunk_size", chunk_size or 1000)
                 chunk_overlap = vectorstore_config.get("chunk_overlap", chunk_overlap or 50)
+                include_filename_in_chunk = vectorstore_config.get("include_filename_in_chunk", True)
             except Exception:
                 chunk_size = chunk_size or 1000
                 chunk_overlap = chunk_overlap or 50
+                include_filename_in_chunk = True
         else:
             chunk_size = chunk_size or 1000
             chunk_overlap = chunk_overlap or 50
+            include_filename_in_chunk = True
         
         return VectorStoreManager(
             pdf_dir=pdf_dir,
             vectorstore_dir=vectorstore_dir, 
             embeddings=embeddings,
             chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
+            chunk_overlap=chunk_overlap,
+            include_filename_in_chunk=include_filename_in_chunk
         )
     
     @classmethod
