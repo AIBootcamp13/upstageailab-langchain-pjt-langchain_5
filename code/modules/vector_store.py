@@ -25,6 +25,7 @@
 import os
 import json
 import hashlib
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -242,10 +243,21 @@ class VectorStoreManager:
             return None
         
         try:
-            # 임베딩 모델명 로그 출력
             embedding_model = getattr(self.embeddings, 'model', 'unknown')
             log.info(f"임베딩 API 호출 - 모델: {embedding_model}")
-            vectorstore = FAISS.from_documents(documents, self.embeddings)
+
+            # 배치 처리
+            batch_size = 10  # 한 번에 처리할 문서 수
+            vectorstore = None
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i+batch_size]
+                if vectorstore is None:
+                    vectorstore = FAISS.from_documents(batch, self.embeddings)
+                else:
+                    vectorstore.add_documents(batch)
+                log.info(f"{i+len(batch)}/{len(documents)} 문서 임베딩 완료.")
+                time.sleep(10)  # API 속도 제한을 피하기 위해 5초 대기
+
             log.info(f"벡터스토어가 생성되었습니다. ({len(documents)} 청크)")
             return vectorstore
         except Exception as e:
