@@ -52,27 +52,49 @@ class RAGSystemInitializer:
         return str(project_root), pdf_dir, vectorstore_dir
     
     @staticmethod
-    def initialize_embeddings(use_config: bool = True) -> UpstageEmbeddings:
+    def initialize_embeddings(use_config: bool = True):
         """
         임베딩 모델 초기화 (config 기반)
         
         Args:
             use_config (bool): config.yaml 사용 여부
         """
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        
+        logger = LoggerManager("RAGSystem")
+        
         if use_config:
             try:
                 config_loader = get_config_loader()
                 embeddings_config = config_loader.get_embeddings_config()
-                model = embeddings_config.get("model", "embedding-query")
-            except Exception:
-                model = "embedding-query"
+                provider = embeddings_config.get("provider", "upstage")
+                model_name = embeddings_config.get("model")
+            except Exception as e:
+                logger.log_warning("임베딩 설정 로드 실패, Upstage 기본값 사용", str(e))
+                provider = "upstage"
+                model_name = "embedding-query"
         else:
-            model = "embedding-query"
-        
-        return UpstageEmbeddings(
-            api_key=os.getenv("UPSTAGE_API_KEY"),
-            model=model
-        )
+            provider = "upstage"
+            model_name = "embedding-query"
+
+        logger.log_step("임베딩 모델 초기화", f"Provider: {provider}, Model: {model_name}")
+
+        if provider == "google":
+            if not os.getenv("GOOGLE_API_KEY"):
+                raise ValueError("임베딩에 google provider를 사용하려면 GOOGLE_API_KEY가 필요합니다.")
+            return GoogleGenerativeAIEmbeddings(
+                model=model_name,
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
+        elif provider == "upstage":
+            if not os.getenv("UPSTAGE_API_KEY"):
+                raise ValueError("임베딩에 upstage provider를 사용하려면 UPSTAGE_API_KEY가 필요합니다.")
+            return UpstageEmbeddings(
+                api_key=os.getenv("UPSTAGE_API_KEY"),
+                model=model_name
+            )
+        else:
+            raise ValueError(f"지원하지 않는 임베딩 provider입니다: {provider}")
     
     @staticmethod
     def initialize_vector_manager(pdf_dir: str, vectorstore_dir: str, 

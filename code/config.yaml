@@ -1,26 +1,39 @@
 # RAG 시스템 설정 파일
 # 이 파일을 수정하여 모델, 검색 파라미터 등을 조정할 수 있습니다.
+# 사용 가능한 provider: "upstage", "google"
+# 사용 가능한 llm model:
+# - upstage : solar-pro2, upstage/solar-1-mini-chat
+# - google : gemini-2.5-flash, gemini-2.5-lite, gemini-2.0-flash, gemma-3-27b-it
+# 사용 가능한 embedding model:
+# - upstage : embedding-query
+# - google : gemini-embedding-001, text-multilingual-embedding-002, text-embedding-004(영어전용)
 
-# LLM 설정 (모든 모델 통합 관리)
+# LLM 설정
 llm:
   router:
-    model: "solar-pro2"          # 라우팅 분류용 모델
-    temperature: 0.1             # 라우터용 temperature (낮을수록 일관성 높음)
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.1
+    reasoning_effort: "low" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
   general:
-    model: "solar-pro2"          # 일반답변용 모델
-    temperature: 0.7             # 일반답변용 temperature
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.7
+    reasoning_effort: "low" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
   rag:
-    model: "solar-pro2"          # RAG 답변용 모델
-    temperature: 0.7             # RAG 답변용 temperature
-    reasoning_effort: "high"     # RAG용 reasoning (solar-pro2만)
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.7
+    reasoning_effort: "high" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
 
 # 임베딩 설정
 embeddings:
-  model: "embedding-query"       # 임베딩 모델
+  provider: "upstage"
+  model: "embedding-query"
 
 # Retriever 설정 (문서 검색)
 retriever:
-  search_type: "similarity"      # 검색 방법: similarity, mmr, similarity_score_threshold
+  search_type: "similarity"      # 검색 방법: "similarity", "mmr", "similarity_score_threshold"
   top_k: 5                       # 반환할 문서 수 (상위 k개)
   score_threshold: 0.8           # similarity_score_threshold일 때 최소 점수
   
@@ -31,7 +44,7 @@ vectorstore:
 
 # 시스템 로그 설정
 logging:
-  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"                  # 로그 레벨: "DEBUG", "INFO", "WARNING", "ERROR"
   
 # 데이터베이스 설정
 database:

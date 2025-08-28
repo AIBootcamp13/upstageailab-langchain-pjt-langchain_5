@@ -188,46 +188,20 @@ class ConfigLoader:
     
     def get_llm_config(self) -> Dict[str, Any]:
         """
-        LLM 설정 반환 (새로운 계층 구조 지원)
+        LLM 설정 반환 (라우터, 일반, RAG 포함)
         
         Returns:
-            Dict[str, Any]: LLM 초기화에 필요한 설정 (router, general, rag 포함)
+            Dict[str, Any]: LLM 설정 딕셔너리
         """
-        llm_config = self.get_config("llm")
-        
-        # 새로운 계층 구조가 있는지 확인
-        if "router" in llm_config and "general" in llm_config and "rag" in llm_config:
-            # 새로운 구조 사용
-            result = {
-                "router": llm_config.get("router", {}),
-                "general": llm_config.get("general", {}),
-                "rag": llm_config.get("rag", {})
-            }
-            self.logger.log_step("LLM 설정 (새로운 계층 구조)", "router, general, rag 분리")
-        else:
-            # 기존 구조 호환성 유지
-            model = llm_config.get("main_model", "solar-pro2")
-            temperature = llm_config.get("temperature", 0.7)
-            reasoning_effort = llm_config.get("reasoning_effort", "high")
-            
-            result = {
-                "router": {
-                    "model": model,
-                    "temperature": 0.1
-                },
-                "general": {
-                    "model": model,
-                    "temperature": temperature
-                },
-                "rag": {
-                    "model": model,
-                    "temperature": temperature,
-                    "reasoning_effort": reasoning_effort if "solar-pro2" in model.lower() else None
-                }
-            }
-            self.logger.log_step("LLM 설정 (기존 구조 호환)", f"모델: {model}")
-        
-        return result
+        return self.get_config("llm")
+    
+    def get_router_config(self) -> Dict[str, Any]:
+        """라우터 설정 반환 (사용되지 않음, 호환성 위해 유지)"""
+        return self.get_config("llm", "router")
+
+    def get_embeddings_config(self) -> Dict[str, Any]:
+        """임베딩 설정 반환"""
+        return self.get_config("embeddings")
     
     def get_router_config(self) -> Dict[str, Any]:
         """라우터 설정 반환"""

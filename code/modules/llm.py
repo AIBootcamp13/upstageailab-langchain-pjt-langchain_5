@@ -18,6 +18,7 @@ import pytz
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_upstage import ChatUpstage
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_upstage import UpstageEmbeddings
 
 from .logger import LoggerManager
@@ -28,105 +29,81 @@ from .config_loader import get_config_loader
 class LLMManager:
     """LLM API 호출 및 응답 처리 클래스"""
     
-    def __init__(self, 
-                 api_key: str = None,
-                 use_config: bool = True,
-                 model: str = None,
-                 reasoning_effort: str = None,
-                 temperature: float = None):
+    def __init__(self, use_config: bool = True):
         """
         LLMManager 초기화
         
         Args:
-            api_key (str, optional): Upstage API 키. None이면 환경변수에서 가져옴
             use_config (bool): config.yaml 사용 여부 (기본: True)
-            model (str, optional): 사용할 모델명 (config 우선, 없으면 이 값 사용)
-            reasoning_effort (str, optional): 추론 노력 수준 (config 우선)
-            temperature (float, optional): 응답 다양성 조절 (config 우선)
         """
         self.logger = LoggerManager("LLM")
-        self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
+        self.upstage_api_key = os.getenv("UPSTAGE_API_KEY")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
         
-        if not self.api_key:
-            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
-        
-        # 설정 로드
         if use_config:
             try:
                 config_loader = get_config_loader()
-                llm_config = config_loader.get_llm_config()
-                
-                # 새로운 설정 구조 사용
-                self.router_model = llm_config.get("router", {}).get("model", "solar-pro2")
-                self.router_temperature = llm_config.get("router", {}).get("temperature", 0.1)
-                
-                self.general_model = llm_config.get("general", {}).get("model", "solar-pro2")
-                self.general_temperature = llm_config.get("general", {}).get("temperature", 0.7)
-                
-                self.rag_model = llm_config.get("rag", {}).get("model", "solar-pro2")
-                self.rag_temperature = llm_config.get("rag", {}).get("temperature", 0.7)
-                self.rag_reasoning_effort = llm_config.get("rag", {}).get("reasoning_effort", "high")
-                
-                self.logger.log_step("Config 기반 LLM 설정", 
-                                   f"Router: {self.router_model}, General: {self.general_model}, RAG: {self.rag_model}")
+                self.llm_config = config_loader.get_llm_config()
             except Exception as e:
                 self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
-                self._set_default_config()
+                self.llm_config = self._get_default_llm_config()
         else:
-            self._set_default_config()
+            self.llm_config = self._get_default_llm_config()
         
-        # 각 용도별 LLM 초기화
         self._init_llms()
-        
-        # 프롬프트 로더 초기화
         self.prompt_loader = get_prompt_loader()
-        
         self.logger.log_success("LLM Manager 초기화 완료")
-    
-    def _set_default_config(self):
-        """기본 설정값 설정"""
-        self.router_model = "solar-pro2"
-        self.router_temperature = 0.1
-        self.general_model = "solar-pro2"
-        self.general_temperature = 0.7
-        self.rag_model = "solar-pro2"
-        self.rag_temperature = 0.7
-        self.rag_reasoning_effort = "high"
-    
+
+    def _get_default_llm_config(self) -> Dict[str, Any]:
+        """기본 LLM 설정 반환"""
+        return {
+            "router": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.1},
+            "general": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.7},
+            "rag": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.7, "reasoning_effort": "high"}
+        }
+
+    def _create_llm_instance(self, role: str) -> Any:
+        """설정에 따라 LLM 인스턴스 생성"""
+        config = self.llm_config.get(role, {})
+        provider = config.get("provider", "upstage")
+        model_name = config.get("model")
+        temperature = config.get("temperature")
+
+        self.logger.log_step(f"{role} LLM 생성", f"Provider: {provider}, Model: {model_name}")
+
+        if provider == "google":
+            if not self.google_api_key:
+                raise ValueError(f"{role}에 google provider를 사용하려면 GOOGLE_API_KEY가 필요합니다.")
+            return ChatGoogleGenerativeAI(
+                model=model_name, 
+                temperature=temperature, 
+                google_api_key=self.google_api_key
+            )
+        
+        elif provider == "upstage":
+            if not self.upstage_api_key:
+                raise ValueError(f"{role}에 upstage provider를 사용하려면 UPSTAGE_API_KEY가 필요합니다.")
+            params = {
+                "api_key": self.upstage_api_key,
+                "model": model_name,
+                "temperature": temperature
+            }
+            if role == "rag" and "solar-pro2" in model_name.lower():
+                params["reasoning_effort"] = config.get("reasoning_effort", "high")
+            return ChatUpstage(**params)
+        
+        else:
+            raise ValueError(f"지원하지 않는 LLM provider입니다: {provider}")
+
     def _init_llms(self):
         """각 용도별 LLM 모델 초기화"""
         try:
-            # 라우터용 LLM
-            router_params = {
-                "api_key": self.api_key,
-                "model": self.router_model,
-                "temperature": self.router_temperature
-            }
-            self.router_llm = ChatUpstage(**router_params)
-            
-            # 일반답변용 LLM
-            general_params = {
-                "api_key": self.api_key,
-                "model": self.general_model,
-                "temperature": self.general_temperature
-            }
-            self.general_llm = ChatUpstage(**general_params)
-            
-            # RAG용 LLM
-            rag_params = {
-                "api_key": self.api_key,
-                "model": self.rag_model,
-                "temperature": self.rag_temperature
-            }
-            if "solar-pro2" in self.rag_model.lower():
-                rag_params["reasoning_effort"] = self.rag_reasoning_effort
-            
-            self.rag_llm = ChatUpstage(**rag_params)
-            
-            self.logger.log_step("LLM 모델들 초기화 완료", 
-                               f"Router: {self.router_model}, General: {self.general_model}, RAG: {self.rag_model}")
+            self.router_llm = self._create_llm_instance("router")
+            self.general_llm = self._create_llm_instance("general")
+            self.rag_llm = self._create_llm_instance("rag")
+            self.logger.log_success("모든 LLM 인스턴스 생성 완료")
         except Exception as e:
-            self.logger.log_error("LLM 초기화", e)
+            self.logger.log_error("LLM 초기화 실패", e)
             raise
     
     def create_custom_prompt(self, 
