@@ -14,6 +14,7 @@ RAG 시스템 초기화 및 질의 처리 로직을 제공합니다.
 import os
 from pathlib import Path
 from typing import Tuple, Optional, Dict, List, Any
+from langchain_core.embeddings import Embeddings
 from langchain_upstage import UpstageEmbeddings
 
 from .vector_store import VectorStoreManager
@@ -98,7 +99,7 @@ class RAGSystemInitializer:
     
     @staticmethod
     def initialize_vector_manager(pdf_dir: str, vectorstore_dir: str, 
-                                embeddings: UpstageEmbeddings,
+                                embeddings: Embeddings,
                                 use_config: bool = True,
                                 chunk_size: int = None,
                                 chunk_overlap: int = None) -> VectorStoreManager:

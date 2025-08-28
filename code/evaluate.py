@@ -261,20 +261,12 @@ class RAGEvaluator:
                 max_retries=10       # 최대 재시도 10회 (증가)
             )
             
-            upstage_embeddings = UpstageEmbeddings(
-                api_key=os.getenv("UPSTAGE_API_KEY"),
-                model="embedding-query",
-                # Rate limit 방지 설정
-                request_timeout=300,   # 요청 타임아웃 120초 (증가)
-                max_retries=10        # 최대 재시도 10회 (증가)
-            )
-            
             # RAGAS 평가 실행 (전체 데이터셋을 한 번에 처리, LangChain rate limit 설정 활용)
             evaluation_result = evaluate(
                 dataset=dataset,
                 metrics=[faithfulness, answer_relevancy, context_recall, answer_correctness],
                 llm=upstage_llm,
-                embeddings=upstage_embeddings
+                embeddings=RAGSystemInitializer.initialize_embeddings()
             )
             
             # 결과를 딕셔너리로 변환
@@ -616,7 +608,7 @@ def main():
     
     try:
         # RAGAS 설정
-        setup_upstage_for_ragas()
+        # setup_upstage_for_ragas()
         
         # 평가기 생성 및 실행
         evaluator = RAGEvaluator()
