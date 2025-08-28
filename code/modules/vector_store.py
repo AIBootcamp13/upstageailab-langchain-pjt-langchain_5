@@ -25,6 +25,7 @@
 import os
 import json
 import hashlib
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
@@ -54,6 +55,14 @@ class VectorStoreManager:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.include_filename_in_chunk = include_filename_in_chunk
+        
+        # 배치 처리 설정 로드
+        from .config_loader import get_config_loader
+        config_loader = get_config_loader()
+        embeddings_config = config_loader.get_embeddings_config()
+        self.use_batch_processing = embeddings_config.get("use_batch_processing", True)
+        self.batch_size = embeddings_config.get("batch_size", 20)
+        self.batch_delay_seconds = embeddings_config.get("batch_delay_seconds", 1)
         
         # 삭제 파일 처리 옵션
         self.rebuild_on_delete = rebuild_on_delete  # 삭제 시 즉시 재구성 여부
@@ -242,10 +251,28 @@ class VectorStoreManager:
             return None
         
         try:
-            # 임베딩 모델명 로그 출력
             embedding_model = getattr(self.embeddings, 'model', 'unknown')
             log.info(f"임베딩 API 호출 - 모델: {embedding_model}")
-            vectorstore = FAISS.from_documents(documents, self.embeddings)
+            # 배치 처리 설정 로그 (재추가)
+            log.info(f"배치 처리 사용 여부(use_batch_processing): {self.use_batch_processing}")
+            log.info(f"배치 크기(batch_size): {self.batch_size}")
+            log.info(f"배치 대기 시간(batch_delay_seconds): {self.batch_delay_seconds}")
+
+            if self.use_batch_processing:
+                # 배치 처리
+                vectorstore = None
+                for i in range(0, len(documents), self.batch_size):
+                    batch = documents[i:i+self.batch_size]
+                    if vectorstore is None:
+                        vectorstore = FAISS.from_documents(batch, self.embeddings)
+                    else:
+                        vectorstore.add_documents(batch)
+                    log.info(f"{i+len(batch)}/{len(documents)} 문서 임베딩 완료.")
+                    time.sleep(self.batch_delay_seconds)
+            else:
+                # 배치 처리 미사용
+                vectorstore = FAISS.from_documents(documents, self.embeddings)
+
             log.info(f"벡터스토어가 생성되었습니다. ({len(documents)} 청크)")
             return vectorstore
         except Exception as e:

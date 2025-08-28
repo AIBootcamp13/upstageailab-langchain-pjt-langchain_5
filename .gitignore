@@ -4,3 +4,4 @@ __pycache__
 data/vectorstore
 data/eval/evaluation_results
 data/chat.db
+bak/

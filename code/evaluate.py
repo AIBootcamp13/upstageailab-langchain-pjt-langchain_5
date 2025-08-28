@@ -230,8 +230,8 @@ class RAGEvaluator:
         
         return results
     
-    def run_ragas_evaluation(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
-        """RAGAS 메트릭을 사용한 평가 실행 (Upstage API 사용)"""
+    def run_ragas_evaluation(self, results: List[Dict[str, Any]]) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
+        """RAGAS 메트릭을 사용한 평가 실행 (Upstage API 사용) - 전체 점수와 개별 질문별 점수 반환"""
         self.logger.log_function_start("run_ragas_evaluation")
         
         try:
@@ -246,34 +246,53 @@ class RAGEvaluator:
             # Dataset 객체 생성
             dataset = Dataset.from_dict(dataset_dict)
             
-            self.logger.log_step("RAGAS 평가 실행", "메트릭: faithfulness, answer_relevancy, context_recall, answer_correctness (Upstage API 사용)")
+            self.logger.log_step("RAGAS 평가 실행", "메트릭: faithfulness, answer_relevancy, context_recall, answer_correctness (LangChain rate limit 설정 활용)")
             
             # baseline.py 방식으로 Upstage 모델 직접 사용
             from langchain_upstage import ChatUpstage, UpstageEmbeddings
             
+            # LangChain rate limit 방지 설정을 포함한 모델 초기화
             upstage_llm = ChatUpstage(
                 api_key=os.getenv("UPSTAGE_API_KEY"),
                 model="solar-pro2",
-                reasoning_effort="high"
+                reasoning_effort="low",
+                # Rate limit 방지 설정
+                request_timeout=300,  # 요청 타임아웃 120초 (증가)
+                max_retries=10       # 최대 재시도 10회 (증가)
             )
             
-            upstage_embeddings = UpstageEmbeddings(
-                api_key=os.getenv("UPSTAGE_API_KEY"),
-                model="embedding-query"
-            )
-            
-            # RAGAS 평가 실행 (baseline.py와 동일한 Upstage 모델 사용)
+            # RAGAS 평가 실행 (전체 데이터셋을 한 번에 처리, LangChain rate limit 설정 활용)
             evaluation_result = evaluate(
                 dataset=dataset,
                 metrics=[faithfulness, answer_relevancy, context_recall, answer_correctness],
                 llm=upstage_llm,
-                embeddings=upstage_embeddings
+                embeddings=RAGSystemInitializer.initialize_embeddings()
             )
             
-            # 결과를 딕셔너리로 변환 (baseline.py 방식으로 수정)
+            # 결과를 딕셔너리로 변환
             scores = {}
             scores_dict = evaluation_result._scores_dict
             
+            # 개별 질문별 점수 추출
+            individual_scores = []
+            for i in range(len(results)):
+                question_scores = {}
+                for metric_name in ["faithfulness", "answer_relevancy", "context_recall", "answer_correctness"]:
+                    if metric_name in scores_dict and len(scores_dict[metric_name]) > i:
+                        score_value = scores_dict[metric_name][i]
+                        # numpy scalar이나 float 처리
+                        if hasattr(score_value, 'item'):
+                            question_scores[metric_name] = float(score_value.item())
+                        else:
+                            question_scores[metric_name] = float(score_value)
+                    else:
+                        question_scores[metric_name] = 0.0
+                
+                # 개별 질문의 RAGAS 점수 계산
+                question_scores["ragas_score"] = sum(question_scores.values()) / len(question_scores)
+                individual_scores.append(question_scores)
+            
+            # 전체 평균 점수 계산
             for metric_name in ["faithfulness", "answer_relevancy", "context_recall", "answer_correctness"]:
                 if metric_name in scores_dict and len(scores_dict[metric_name]) > 0:
                     # 리스트의 평균값 계산
@@ -290,8 +309,8 @@ class RAGEvaluator:
             # RAGAS 종합 점수 계산 (평균)
             scores["ragas_score"] = sum(scores.values()) / len(scores)
             
-            self.logger.log_function_end("run_ragas_evaluation", f"평가 완료: {scores['ragas_score']:.3f}")
-            return scores
+            self.logger.log_function_end("run_ragas_evaluation", f"평가 완료: 전체 {scores['ragas_score']:.3f}, 개별 {len(individual_scores)}개 질문")
+            return scores, individual_scores
             
         except Exception as e:
             import traceback
@@ -299,7 +318,7 @@ class RAGEvaluator:
             self.logger.error(f"오류 타입: {type(e)}")
             self.logger.error(f"상세 트레이스백: {traceback.format_exc()}")
             # 평가 실패 시 기본값 반환
-            return {
+            default_scores = {
                 "faithfulness": 0.0,
                 "answer_relevancy": 0.0,
                 "context_recall": 0.0,
@@ -307,6 +326,13 @@ class RAGEvaluator:
                 "ragas_score": 0.0,
                 "error": str(e)
             }
+            
+            # 개별 점수도 기본값으로 생성
+            default_individual_scores = []
+            for _ in results:
+                default_individual_scores.append(default_scores.copy())
+            
+            return default_scores, default_individual_scores
     
     def calculate_category_scores(self, results: List[Dict[str, Any]], 
                                 overall_scores: Dict[str, float]) -> Dict[str, Any]:
@@ -352,7 +378,8 @@ class RAGEvaluator:
         return category_scores
     
     def save_evaluation_results(self, dataset: Dict[str, Any], results: List[Dict[str, Any]], 
-                              overall_scores: Dict[str, float], category_scores: Dict[str, Any]) -> str:
+                              overall_scores: Dict[str, float], category_scores: Dict[str, Any],
+                              individual_scores: List[Dict[str, float]]) -> str:
         """평가 결과 저장"""
         self.logger.log_function_start("save_evaluation_results")
         
@@ -385,6 +412,22 @@ class RAGEvaluator:
                 "retrieval_k": retriever_config.get("top_k", 5)
             }
             
+            # 개별 점수를 각 결과에 추가
+            enhanced_results = []
+            for i, result in enumerate(results):
+                enhanced_result = result.copy()
+                if i < len(individual_scores):
+                    enhanced_result["ragas_scores"] = individual_scores[i]
+                else:
+                    enhanced_result["ragas_scores"] = {
+                        "faithfulness": 0.0,
+                        "answer_relevancy": 0.0,
+                        "context_recall": 0.0,
+                        "answer_correctness": 0.0,
+                        "ragas_score": 0.0
+                    }
+                enhanced_results.append(enhanced_result)
+            
             # 결과 데이터 구성
             evaluation_report = {
                 "metadata": {
@@ -404,7 +447,7 @@ class RAGEvaluator:
                 },
                 "overall_scores": overall_scores,
                 "category_scores": category_scores,
-                "detailed_results": results,
+                "detailed_results": enhanced_results,
                 "summary": {
                     "total_questions": total_questions,
                     "total_processing_time_ms": sum(r.get("processing_time_ms", 0) for r in results),
@@ -420,7 +463,7 @@ class RAGEvaluator:
             
             # latest.json 심볼릭 링크 업데이트
             latest_path = self.results_dir / "latest.json"
-            if latest_path.exists():
+            if latest_path.exists() or latest_path.is_symlink():
                 latest_path.unlink()
             
             # 상대 경로로 심볼릭 링크 생성
@@ -435,7 +478,8 @@ class RAGEvaluator:
     
     def print_evaluation_summary(self, overall_scores: Dict[str, float], 
                                category_scores: Dict[str, Any], 
-                               results: List[Dict[str, Any]]):
+                               results: List[Dict[str, Any]],
+                               individual_scores: List[Dict[str, float]]):
         """평가 결과 요약 출력"""
         self.logger.info("\n" + "="*60)
         self.logger.info("🎯 RAG 시스템 품질 평가 결과 (라우터 기반)")
@@ -482,6 +526,36 @@ class RAGEvaluator:
         self.logger.info(f"  • 총 처리시간: {total_time:.0f}ms")
         self.logger.info(f"  • 평균 처리시간: {avg_time:.0f}ms")
         
+        # 개별 질문별 RAGAS 점수 요약
+        self.logger.info(f"\n📊 개별 질문별 RAGAS 점수 요약:")
+        if individual_scores:
+            # 점수 분포 계산
+            score_ranges = {
+                "excellent (0.8-1.0)": 0,
+                "good (0.6-0.8)": 0,
+                "fair (0.4-0.6)": 0,
+                "poor (0.2-0.4)": 0,
+                "very_poor (0.0-0.2)": 0
+            }
+            
+            for scores in individual_scores:
+                ragas_score = scores.get("ragas_score", 0.0)
+                if ragas_score >= 0.8:
+                    score_ranges["excellent (0.8-1.0)"] += 1
+                elif ragas_score >= 0.6:
+                    score_ranges["good (0.6-0.8)"] += 1
+                elif ragas_score >= 0.4:
+                    score_ranges["fair (0.4-0.6)"] += 1
+                elif ragas_score >= 0.2:
+                    score_ranges["poor (0.2-0.4)"] += 1
+                else:
+                    score_ranges["very_poor (0.0-0.2)"] += 1
+            
+            for range_name, count in score_ranges.items():
+                if count > 0:
+                    percentage = (count / len(individual_scores)) * 100
+                    self.logger.info(f"  • {range_name}: {count}개 ({percentage:.1f}%)")
+        
         self.logger.info("\n" + "="*60)
     
     def run_evaluation(self):
@@ -501,16 +575,16 @@ class RAGEvaluator:
             results = self.process_questions(dataset)
             
             # 4. RAGAS 평가 실행
-            overall_scores = self.run_ragas_evaluation(results)
+            overall_scores, individual_scores = self.run_ragas_evaluation(results)
             
             # 5. 카테고리별 분석
             category_scores = self.calculate_category_scores(results, overall_scores)
             
             # 6. 결과 저장
-            result_file = self.save_evaluation_results(dataset, results, overall_scores, category_scores)
+            result_file = self.save_evaluation_results(dataset, results, overall_scores, category_scores, individual_scores)
             
             # 7. 결과 출력
-            self.print_evaluation_summary(overall_scores, category_scores, results)
+            self.print_evaluation_summary(overall_scores, category_scores, results, individual_scores)
             
             self.logger.info(f"\n💾 상세 결과가 저장되었습니다: {result_file}")
             self.logger.info(f"📋 최신 결과 확인: {self.results_dir}/latest.json")
@@ -534,7 +608,7 @@ def main():
     
     try:
         # RAGAS 설정
-        setup_upstage_for_ragas()
+        # setup_upstage_for_ragas()
         
         # 평가기 생성 및 실행
         evaluator = RAGEvaluator()

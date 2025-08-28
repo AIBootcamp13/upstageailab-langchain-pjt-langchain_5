@@ -3,13 +3,14 @@
 # 사용 가능한 provider: "upstage", "google"
 # 사용 가능한 llm model:
 # - upstage : solar-pro2, upstage/solar-1-mini-chat
-# - google : gemini-2.5-flash, gemini-2.5-lite, gemini-2.0-flash, gemma-3-27b-it
+# - google : gemini-2.5-flash, gemini-2.5-lite, gemini-2.0-flash
 # 사용 가능한 embedding model:
 # - upstage : embedding-query
-# - google : gemini-embedding-001, text-multilingual-embedding-002, text-embedding-004(영어전용)
+# - google : gemini-embedding-001
 
 # LLM 설정
 llm:
+  delay_seconds: 0          # 각 LLM 호출 전 대기 시간 (초, 0이면 대기 없음)
   router:
     provider: "upstage"
     model: "solar-pro2"
@@ -30,6 +31,12 @@ llm:
 embeddings:
   provider: "upstage"
   model: "embedding-query"
+  use_batch_processing: false      # API 요청 제한을 피하기 위한 배치 처리 사용 여부
+  # provider: "google"
+  # model: "gemini-embedding-001"
+  # use_batch_processing: true      # API 요청 제한을 피하기 위한 배치 처리 사용 여부
+  # batch_size: 10                   # 배치 처리 시 한 번에 처리할 문서 수
+  # batch_delay_seconds: 10          # 각 배치 처리 후 대기 시간 (초)
 
 # Retriever 설정 (문서 검색)
 retriever:

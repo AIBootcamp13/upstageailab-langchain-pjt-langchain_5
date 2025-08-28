@@ -204,18 +204,7 @@ class ConfigLoader:
         """임베딩 설정 반환"""
         return self.get_config("embeddings")
     
-    def get_router_config(self) -> Dict[str, Any]:
-        """라우터 설정 반환"""
-        return {
-            "router_model": self.get_config("router", "model"),
-            "temperature": self.get_config("router", "temperature")
-        }
     
-    def get_embeddings_config(self) -> Dict[str, Any]:
-        """임베딩 설정 반환"""
-        return {
-            "model": self.get_config("embeddings", "model")
-        }
     
     def get_retriever_config(self) -> Dict[str, Any]:
         """리트리버 설정 반환"""

@@ -14,6 +14,7 @@ RAG 시스템 초기화 및 질의 처리 로직을 제공합니다.
 import os
 from pathlib import Path
 from typing import Tuple, Optional, Dict, List, Any
+from langchain_core.embeddings import Embeddings
 from langchain_upstage import UpstageEmbeddings
 
 from .vector_store import VectorStoreManager
@@ -98,7 +99,7 @@ class RAGSystemInitializer:
     
     @staticmethod
     def initialize_vector_manager(pdf_dir: str, vectorstore_dir: str, 
-                                embeddings: UpstageEmbeddings,
+                                embeddings: Embeddings,
                                 use_config: bool = True,
                                 chunk_size: int = None,
                                 chunk_overlap: int = None) -> VectorStoreManager:
@@ -204,7 +205,7 @@ class RAGSystemInitializer:
             # 라우터 초기화
             router = None
             try:
-                router = QueryRouter(use_config=use_config)
+                router = QueryRouter(llm_manager=llm_manager)
                 logger.log_step("라우터 초기화", "QueryRouter 생성 완료")
             except Exception as e:
                 logger.log_warning("라우터 초기화 실패", str(e))

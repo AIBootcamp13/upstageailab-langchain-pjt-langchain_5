@@ -247,14 +247,18 @@ flowchart TD
 
 <br>
 
-## 🚨​ 트러블 슈팅
-### 1. OOO 에러 발견
+## 📊 모델 종류별 RAGAS 평가점수
 
-#### 설명
-- _프로젝트 진행 중 발생한 트러블에 대해 작성해주세요_
-
-#### 해결
-- _프로젝트 진행 중 발생한 트러블 해결방법 대해 작성해주세요_
+| embedding모델 | llm모델 | faithfulness | answer_relevancy | context_recall | answer_correctness | ragas_score |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| upstage embedding-query | solar-1-mini-chat | 0.274 | 0.516 | 0.300 | 0.684 | 0.444 |
+| upstage embedding-query | solar-pro2 (no reasoning) | 0.318 | 0.444 | 0.457 | 0.607 | 0.456 |
+| upstage embedding-query | solar-pro2 (reasoning) | 0.376 | 0.437 | 0.457 | 0.606 | 0.469 |
+| upstage embedding-query | gemini-2.0-flash | 0.476 | 0.408 | 0.457 | 0.725 | 0.517 |
+| upstage embedding-query | gemini-2.5-flash-lite | 0.500 | 0.415 | 0.457 | 0.793 | 0.541 |
+| upstage embedding-query | gemini-2.5-flash | 0.544 | 0.432 | 0.457 | 0.807 | 0.560 |
+| gemini-embedding-001 | solar-pro2 (reasoning) | 0.375 | 0.878 | 0.557 | 0.692 | 0.625 |
+| gemini-embedding-001 | gemini-2.5-flash | 0.463 | 0.821 | 0.457 | 0.820 | 0.640 |
 
 ## 📌 프로젝트 회고
 ### 멤버별 소감
