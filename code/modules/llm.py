@@ -11,6 +11,7 @@ LLM API 호출 및 응답 처리 모듈
 """
 
 import os
+import time
 from typing import List, Dict, Optional, Generator, Any
 from datetime import datetime
 import pytz
@@ -52,6 +53,9 @@ class LLMManager:
                 self.llm_config = self._get_default_llm_config()
         else:
             self.llm_config = self._get_default_llm_config()
+
+        # LLM 호출 딜레이 설정
+        self.delay_seconds = self.llm_config.get("delay_seconds", 0)
         
         self._init_llms()
         self.prompt_loader = get_prompt_loader()
@@ -60,10 +64,17 @@ class LLMManager:
     def _get_default_llm_config(self) -> Dict[str, Any]:
         """기본 LLM 설정 반환"""
         return {
+            "delay_seconds": 0,
             "router": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.1},
             "general": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.7},
             "rag": {"provider": "upstage", "model": "solar-pro2", "temperature": 0.7, "reasoning_effort": "high"}
         }
+
+    def _apply_delay(self):
+        """설정된 시간만큼 대기"""
+        if self.delay_seconds > 0:
+            self.logger.log_step("LLM 호출 대기", f"{self.delay_seconds}초 동안 대기합니다.")
+            time.sleep(self.delay_seconds)
 
     def _create_llm_instance(self, role: str) -> Any:
         """설정에 따라 LLM 인스턴스 생성"""
@@ -158,7 +169,7 @@ class LLMManager:
             messages.append(MessagesPlaceholder(variable_name="chat_history"))
         
         # 사용자 메시지
-        messages.append(("human", "{question}"))
+        messages.append(("human", "{{question}}"))
         
         return ChatPromptTemplate.from_messages(messages)
     
@@ -210,7 +221,7 @@ class LLMManager:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{question}")
+                ("human", "{{question}}")
             ])
             
             # 프롬프트 포맷팅
@@ -226,6 +237,9 @@ class LLMManager:
                 self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
             self.logger.log_step("사용자 질문", question)
             
+            # LLM 호출 전 대기
+            self._apply_delay()
+
             # 일반답변용 LLM 호출
             self.logger.log_step("일반답변용 LLM 호출", f"모델: {self.llm_config['general']['model']}")
             response = self.general_llm.invoke(formatted_prompt)
@@ -286,7 +300,7 @@ class LLMManager:
                 default_prompt = ChatPromptTemplate.from_messages([
                     ("system", system_prompt),
                     MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{question}")
+                    ("human", "{{question}}")
                 ])
                 
                 # 프롬프트 포맷팅
@@ -304,6 +318,9 @@ class LLMManager:
                 self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
             self.logger.log_step("사용자 질문", question)
             
+            # LLM 호출 전 대기
+            self._apply_delay()
+
             # RAG용 LLM 호출
             self.logger.log_step("RAG용 LLM 호출", f"모델: {self.llm_config['rag']['model']}")
             response = self.rag_llm.invoke(formatted_prompt)
@@ -382,7 +399,7 @@ class LLMManager:
                 default_prompt = ChatPromptTemplate.from_messages([
                     ("system", system_prompt),
                     MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{question}")
+                    ("human", "{{question}}")
                 ])
                 
                 # 프롬프트 포맷팅
@@ -400,6 +417,9 @@ class LLMManager:
                 self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
             self.logger.log_step("사용자 질문", question)
             
+            # LLM 호출 전 대기
+            self._apply_delay()
+
             # 스트리밍 응답
             self.logger.log_step("RAG용 LLM 스트리밍 호출", f"모델: {self.llm_config['rag']['model']}")
             for chunk in self.rag_llm.stream(formatted_prompt):
@@ -424,6 +444,8 @@ class LLMManager:
     def validate_api_connection(self) -> bool:
         """API 연결 상태 확인"""
         try:
+            # LLM 호출 전 대기
+            self._apply_delay()
             test_response = self.general_llm.invoke([HumanMessage(content="Hello")])
             self.logger.log_success("API 연결 확인 완료")
             return True

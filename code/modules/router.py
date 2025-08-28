@@ -10,69 +10,34 @@
 """
 
 import os
-from typing import Dict, Any, Optional
-from datetime import datetime
-import pytz
-from langchain_upstage import ChatUpstage
+from typing import Dict, Any
+
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 
 from .logger import LoggerManager
 from .prompt_loader import get_prompt_loader
-from .config_loader import get_config_loader
+from .llm import LLMManager
 
 
 class QueryRouter:
     """질문 라우팅 클래스"""
-    
-    def __init__(self, 
-                 api_key: str = None,
-                 use_config: bool = True,
-                 router_model: str = None,
-                 temperature: float = None):
+
+    def __init__(self, llm_manager: LLMManager):
         """
         QueryRouter 초기화
-        
+
         Args:
-            api_key: Upstage API 키
-            use_config (bool): config.yaml 사용 여부 (기본: True)
-            router_model: 라우팅에 사용할 모델 (config 우선)
-            temperature: 응답 다양성 (config 우선, 낮을수록 일관성 높음)
+            llm_manager (LLMManager): LLMManager 인스턴스
         """
         self.logger = LoggerManager("QueryRouter")
-        self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
+        self.llm_manager = llm_manager
+        self.router_llm = self.llm_manager.router_llm
         
-        if not self.api_key:
-            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
-        
-        # 설정 로드
-        if use_config:
-            try:
-                config_loader = get_config_loader()
-                llm_config = config_loader.get_llm_config()
-                
-                # 새로운 설정 구조 사용
-                router_config = llm_config.get("router", {})
-                self.router_model = router_config.get("model", router_model or "solar-pro2")
-                self.temperature = router_config.get("temperature", temperature or 0.1)
-                
-                self.logger.log_step("Config 기반 Router 설정", 
-                                   f"모델: {self.router_model}, temperature: {self.temperature}")
-            except Exception as e:
-                self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
-                self.router_model = router_model or "solar-pro2"
-                self.temperature = temperature or 0.1
-        else:
-            self.router_model = router_model or "solar-pro2"
-            self.temperature = temperature or 0.1
-        
-        # 라우팅용 모델 초기화
-        self.router_llm = ChatUpstage(
-            api_key=self.api_key,
-            model=self.router_model,
-            temperature=self.temperature
-        )
-        
+        # 라우터 모델 정보 로깅
+        router_config = self.llm_manager.llm_config.get("router", {})
+        self.router_model = router_config.get("model", "N/A")
+        self.logger.log_step("Router LLM 설정", f"모델: {self.router_model}")
+
         # 프롬프트 로더 초기화
         self.prompt_loader = get_prompt_loader()
         
@@ -112,6 +77,9 @@ class QueryRouter:
             self.logger.log_step("시스템 프롬프트", system_prompt)
             self.logger.log_step("사용자 질문", question)
             
+            # LLM 호출 전 대기
+            self.llm_manager._apply_delay()
+
             # LLM 호출
             self.logger.log_step("라우터용 LLM 호출", f"모델: {self.router_model}")
             response = self.router_llm.invoke(messages)

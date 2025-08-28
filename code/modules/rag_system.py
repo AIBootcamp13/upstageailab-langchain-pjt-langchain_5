@@ -205,7 +205,7 @@ class RAGSystemInitializer:
             # 라우터 초기화
             router = None
             try:
-                router = QueryRouter(use_config=use_config)
+                router = QueryRouter(llm_manager=llm_manager)
                 logger.log_step("라우터 초기화", "QueryRouter 생성 완료")
             except Exception as e:
                 logger.log_warning("라우터 초기화 실패", str(e))
