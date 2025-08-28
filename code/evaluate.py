@@ -257,7 +257,7 @@ class RAGEvaluator:
                 model="solar-pro2",
                 reasoning_effort="low",
                 # Rate limit 방지 설정
-                request_timeout=60,  # 요청 타임아웃 60초 (증가)
+                request_timeout=300,  # 요청 타임아웃 120초 (증가)
                 max_retries=10       # 최대 재시도 10회 (증가)
             )
             
@@ -265,7 +265,7 @@ class RAGEvaluator:
                 api_key=os.getenv("UPSTAGE_API_KEY"),
                 model="embedding-query",
                 # Rate limit 방지 설정
-                request_timeout=60,   # 요청 타임아웃 60초 (증가)
+                request_timeout=300,   # 요청 타임아웃 120초 (증가)
                 max_retries=10        # 최대 재시도 10회 (증가)
             )
             
