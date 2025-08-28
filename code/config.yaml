@@ -13,7 +13,7 @@ llm:
   router:
     provider: "upstage"
     model: "solar-pro2"
-    temperature: 0.1
+    temperature: 0.1        # temperature 0.0 ~ 1.0 : 낮을수록 답변이 확정적(정확성), 높을 수록 다양성(창의성)
     reasoning_effort: "low" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
   general:
     provider: "upstage"

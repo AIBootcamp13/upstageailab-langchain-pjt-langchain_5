@@ -68,30 +68,35 @@ class LLMManager:
         provider = config.get("provider", "upstage")
         model_name = config.get("model")
         temperature = config.get("temperature")
+        reasoning_effort = config.get("reasoning_effort")
 
-        self.logger.log_step(f"{role} LLM 생성", f"Provider: {provider}, Model: {model_name}")
+        log_message = f"Provider: {provider}, Model: {model_name}"
+        if "solar-pro2" in model_name.lower() and reasoning_effort:
+            log_message += f", Reasoning Effort: {reasoning_effort}"
+
+        self.logger.log_step(f"{role} LLM 생성", log_message)
 
         if provider == "google":
             if not self.google_api_key:
                 raise ValueError(f"{role}에 google provider를 사용하려면 GOOGLE_API_KEY가 필요합니다.")
             return ChatGoogleGenerativeAI(
-                model=model_name, 
-                temperature=temperature, 
-                google_api_key=self.google_api_key
+                model=model_name,
+                temperature=temperature,
+                google_api_key=self.google_api_key,
             )
-        
+
         elif provider == "upstage":
             if not self.upstage_api_key:
                 raise ValueError(f"{role}에 upstage provider를 사용하려면 UPSTAGE_API_KEY가 필요합니다.")
             params = {
                 "api_key": self.upstage_api_key,
                 "model": model_name,
-                "temperature": temperature
+                "temperature": temperature,
             }
-            if role == "rag" and "solar-pro2" in model_name.lower():
-                params["reasoning_effort"] = config.get("reasoning_effort", "high")
+            if "solar-pro2" in model_name.lower() and reasoning_effort:
+                params["reasoning_effort"] = reasoning_effort
             return ChatUpstage(**params)
-        
+
         else:
             raise ValueError(f"지원하지 않는 LLM provider입니다: {provider}")
 
