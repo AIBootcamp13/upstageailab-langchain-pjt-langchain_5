@@ -28,8 +28,13 @@ llm:
 
 # 임베딩 설정
 embeddings:
-  provider: "upstage"
-  model: "embedding-query"
+  # provider: "upstage"
+  # model: "embedding-query"
+  provider: "google"
+  model: "gemini-embedding-001"
+  use_batch_processing: true      # API 요청 제한을 피하기 위한 배치 처리 사용 여부
+  batch_size: 10                   # 배치 처리 시 한 번에 처리할 문서 수
+  batch_delay_seconds: 10          # 각 배치 처리 후 대기 시간 (초)
 
 # Retriever 설정 (문서 검색)
 retriever:
