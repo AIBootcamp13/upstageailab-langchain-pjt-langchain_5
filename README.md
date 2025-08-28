@@ -108,6 +108,7 @@ uv add 패키지명
 │   ├── tests/               # pytest 테스트 코드
 │   ├── main.py              # Streamlit WebUI
 │   ├── crawling.py          # 제과/제빵 자료 다운로드·압축해제 유틸
+│   ├── config.yaml          # RAG 시스템 설정 파일
 │   └── evaluate.py          # RAGAS 품질 평가 도구
 ├── data/
 │   ├── pdf/                 # PDF 문서들
