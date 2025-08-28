@@ -42,29 +42,31 @@ class QueryRouter:
         self.logger = LoggerManager("QueryRouter")
         self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
         
+        if not self.api_key:
+            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
+        
         # 설정 로드
         if use_config:
             try:
                 config_loader = get_config_loader()
-                router_config = config_loader.get_router_config()
+                llm_config = config_loader.get_llm_config()
                 
-                self.router_model = router_config.get("router_model", router_model or "upstage/solar-1-mini-chat")
+                # 새로운 설정 구조 사용
+                router_config = llm_config.get("router", {})
+                self.router_model = router_config.get("model", router_model or "solar-pro2")
                 self.temperature = router_config.get("temperature", temperature or 0.1)
                 
                 self.logger.log_step("Config 기반 Router 설정", 
                                    f"모델: {self.router_model}, temperature: {self.temperature}")
             except Exception as e:
                 self.logger.log_warning(f"Config 로드 실패, 기본값 사용", str(e))
-                self.router_model = router_model or "upstage/solar-1-mini-chat"
+                self.router_model = router_model or "solar-pro2"
                 self.temperature = temperature or 0.1
         else:
-            self.router_model = router_model or "upstage/solar-1-mini-chat"
+            self.router_model = router_model or "solar-pro2"
             self.temperature = temperature or 0.1
         
-        if not self.api_key:
-            raise ValueError("UPSTAGE_API_KEY가 설정되지 않았습니다.")
-        
-        # 라우팅용 경량 모델 초기화 (reasoning_effort 제외)
+        # 라우팅용 모델 초기화
         self.router_llm = ChatUpstage(
             api_key=self.api_key,
             model=self.router_model,
@@ -76,19 +78,22 @@ class QueryRouter:
         
         self.logger.log_success("Query Router 초기화 완료")
     
-    def get_response_or_route(self, question: str) -> Dict[str, Any]:
+    def route(self, question: str) -> Dict[str, Any]:
         """
-        질문에 대해 직접 답변하거나 RAG 라우팅 신호를 반환
+        질문 라우팅 수행 (분류만 수행, 답변 생성 안함)
         
         Args:
             question: 사용자 질문
             
         Returns:
             Dict: {
-                "response": str (직접 답변 또는 "BAKERY-RAG"),
-                "is_bakery_rag": bool (RAG 필요 여부)
+                "type": "GENERAL" or "RAG",
+                "use_rag": bool,
+                "response": None (답변은 별도 LLM에서 생성)
             }
         """
+        self.logger.log_function_start("route", question=question[:50] + "..." if len(question) > 50 else question)
+        
         try:
             # Jinja2 템플릿을 사용하여 시스템 프롬프트 렌더링
             system_prompt = self.prompt_loader.render_routing_prompt(question)
@@ -102,100 +107,51 @@ class QueryRouter:
             # 프롬프트 포맷팅
             messages = classification_prompt.format_messages(question=question)
             
+            # 최종 프롬프트를 로그에 출력
+            self.logger.log_step("최종 라우팅 프롬프트", f"프롬프트 길이: {len(str(messages))}자")
+            self.logger.log_step("시스템 프롬프트", system_prompt)
+            self.logger.log_step("사용자 질문", question)
+            
             # LLM 호출
+            self.logger.log_step("라우터용 LLM 호출", f"모델: {self.router_model}")
             response = self.router_llm.invoke(messages)
             response_text = response.content.strip()
             
-            # BAKERY-RAG 신호 체크 (여러 패턴 지원)
-            response_clean = response_text.strip()
-            
-            # 1. 정확한 일치 (가장 명확한 경우)
-            if response_clean == "BAKERY-RAG" or response_clean == "BAKERY-RAG.":
-                self.logger.log_step("RAG 라우팅", "명확한 BAKERY-RAG 신호 감지")
-                return {
-                    "response": None,
-                    "is_bakery_rag": True
+            # 분류 결과 확인
+            if response_text == "일반답변":
+                self.logger.log_step("일반답변 분류", "일반답변으로 분류됨")
+                route_result = {
+                    "type": "GENERAL",
+                    "use_rag": False,
+                    "response": None  # 일반답변용 LLM에서 생성할 예정
                 }
-            
-            # 2. 시작 패턴 (LLM이 추가 설명을 붙인 경우)
-            elif response_clean.startswith("BAKERY-RAG"):
-                self.logger.log_warning("RAG 라우팅", f"BAKERY-RAG로 시작하는 응답: {response_text[:50]}...")
-                return {
-                    "response": None,
-                    "is_bakery_rag": True
+            elif response_text == "RAG답변":
+                self.logger.log_step("RAG답변 분류", "RAG답변으로 분류됨")
+                route_result = {
+                    "type": "RAG",
+                    "use_rag": True,
+                    "response": None  # RAG용 LLM에서 생성할 예정
                 }
-            
-            # 3. 처음 몇 단어에 포함 (실수로 앞에 나온 경우)
-            elif "BAKERY-RAG" in response_text.split()[:3]:
-                self.logger.log_warning("RAG 라우팅", f"처음 3단어에 BAKERY-RAG 포함: {response_text[:50]}...")
-                return {
-                    "response": None,
-                    "is_bakery_rag": True
-                }
-            
-            # 4. 응답에 포함되어 있지만 일반 답변으로 보이는 경우 (마지막 수단)
-            elif "BAKERY-RAG" in response_text:
-                self.logger.log_warning("RAG 라우팅", f"응답 중간에 BAKERY-RAG 포함, RAG로 라우팅: {response_text[:100]}...")
-                return {
-                    "response": None,
-                    "is_bakery_rag": True
-                }
-            
             else:
-                # 완전한 일반 답변
-                self.logger.log_step("일반 답변", f"직접 응답 생성: {response_text[:50]}...")
-                return {
-                    "response": response_text,
-                    "is_bakery_rag": False
+                # 예상치 못한 응답인 경우 기본값으로 RAG로 라우팅
+                self.logger.log_warning("예상치 못한 라우팅 응답", f"응답: {response_text}, RAG로 라우팅")
+                route_result = {
+                    "type": "RAG",
+                    "use_rag": True,
+                    "response": None
                 }
+            
+            self.logger.log_function_end("route", f"분류 결과: {route_result['type']}")
+            return route_result
             
         except Exception as e:
-            self.logger.log_error("LLM 라우팅 오류", e)
-            # 에러 시 일반 응답으로 폴백
+            self.logger.log_error("라우팅 오류", e)
+            # 에러 시 RAG로 폴백
             return {
-                "response": "죄송합니다. 현재 응답을 처리하는 중 문제가 발생했습니다. 다시 시도해주세요.",
-                "is_bakery_rag": False
-            }
-    
-    def route(self, question: str) -> Dict[str, Any]:
-        """
-        질문 라우팅 수행 (호환성을 위해 유지)
-        
-        Args:
-            question: 사용자 질문
-            
-        Returns:
-            Dict: {
-                "type": "BAKERY" or "GENERAL",
-                "use_rag": bool,
-                "response": str or None,
-                "model": str (사용된 모델)
-            }
-        """
-        self.logger.log_function_start("route", question=question[:50] + "..." if len(question) > 50 else question)
-        
-        # 새로운 방식으로 라우팅
-        result = self.get_response_or_route(question)
-        
-        if result["is_bakery_rag"]:
-            # RAG가 필요한 제빵 관련 질문
-            route_result = {
-                "type": "BAKERY",
+                "type": "RAG",
                 "use_rag": True,
-                "response": None,  # RAG에서 생성할 예정
-                "model": "solar-pro2"
+                "response": None
             }
-        else:
-            # 직접 답변 가능한 일반 질문
-            route_result = {
-                "type": "GENERAL",
-                "use_rag": False,
-                "response": result["response"],  # 이미 생성된 답변
-                "model": "upstage/solar-1-mini-chat"
-            }
-        
-        self.logger.log_function_end("route", f"분류 결과: {route_result['type']} (응답: {'생성됨' if route_result['response'] else 'RAG 필요'})")
-        return route_result
     
     def explain_route(self, question: str) -> str:
         """
@@ -209,7 +165,7 @@ class QueryRouter:
         """
         result = self.route(question)
         
-        if result["type"] == "BAKERY":
-            return f"제빵 전문 지식이 필요한 질문으로 판단되어 RAG 시스템을 사용합니다. 모델: {result['model']}"
+        if result["type"] == "RAG":
+            return f"제빵 전문 지식이 필요한 질문으로 판단되어 RAG 시스템을 사용합니다."
         else:
-            return f"일반 질문으로 판단되어 직접 답변을 생성했습니다. 모델: {result['model']}"
+            return f"일반 질문으로 판단되어 일반답변 시스템을 사용합니다."

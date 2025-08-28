@@ -1,15 +1,16 @@
-# LangChain을 활용한 RAG 시스템
+# 제과제빵 문서 기반 RAG 시스템 (LangChain + Upstage)
 
 <br>
 
 ## 💻 프로젝트 소개
 ### <프로젝트 소개>
-- LangChain 프로젝트로, RAG(Retrieval-Augmented Generation) 시스템을 구현합니다.
-- PDF 문서를 활용하여 질문-답변 시스템을 구축하는 프로젝트입니다.
+- 제과제빵 이론·실습 및 자격시험 자료(PDF)를 기반으로 한 한국어 RAG 질의응답 어시스턴트입니다.
+- Streamlit WebUI(제빵 테마)에서 대화형으로 질문하고 근거 문서를 함께 제공합니다.
 
 ### <작품 소개>
-- LangChain, Upstage API, FAISS를 활용한 문서 기반 질의응답 시스템
-- PDF 문서 로드, 텍스트 분할, 임베딩 생성, 벡터 저장소 구축, 검색 및 답변 생성 파이프라인 구현
+- Upstage Chat/Embeddings와 FAISS를 활용해 제과제빵 전문 지식의 검색·생성을 결합합니다.
+- PDF 로드 → 텍스트 분할 → 임베딩 생성 → 벡터 검색 → 답변 생성 파이프라인을 구현했습니다.
+- 레시피, 반죽/발효 공정, 온도 관리, 위생·안전 등 주제를 지원합니다.
 
 <br>
 
@@ -52,7 +53,7 @@
 4. **API Key 발급** 버튼을 클릭하여 키를 생성합니다.
 5. 발급된 API Key를 복사하여  `.env` 파일에 추가합니다. (env_template파일을 참고) (`UPSTAGE_API_KEY=발급받은_API_키`)
 
-## ⚙️ UV 명령어 사용법
+## ⚙️ UV 명령어 사용법 (실행 가이드)
 ### UV 설치
 ```bash
 pip install uv
@@ -65,6 +66,9 @@ uv run python code/baseline/baseline.py
 
 # Streamlit WebUI 실행
 uv run streamlit run code/main.py
+
+# CLI 데모 실행
+uv run python code/test_cli.py
 
 # RAG 품질 평가 실행
 uv run python code/evaluate.py
@@ -96,10 +100,14 @@ uv add 패키지명
 │   │   ├── llm.py           # LLM 관리
 │   │   ├── retriever.py     # 문서 검색 관리
 │   │   ├── chat_history.py  # 채팅 히스토리 관리
-│   │   └── crawler.py       # 문서 로딩 관리
+│   │   ├── config_loader.py  # 설정 로더
+│   │   ├── prompt_loader.py  # 프롬프트 로더
+│   │   ├── rag_system.py     # RAG 초기화/Query 처리
+│   │   └── router.py         # 질문 라우팅
+│   ├── prompts/             # 프롬프트 템플릿
 │   ├── tests/               # pytest 테스트 코드
-│   ├── utils/               # 유틸리티 함수
 │   ├── main.py              # Streamlit WebUI
+│   ├── crawling.py          # 제과/제빵 자료 다운로드·압축해제 유틸
 │   └── evaluate.py          # RAGAS 품질 평가 도구
 ├── data/
 │   ├── pdf/                 # PDF 문서들
@@ -126,18 +134,55 @@ uv add 패키지명
 - **ChatHistoryManager**: 대화 기록 관리, 메모리 기능
 - **SQLManager**: SQLite 기반 대화 저장
 - **LoggerManager**: 통합 로깅 시스템
+- **ConfigLoader / get_config**: 설정 로딩 및 접근 유틸리티
+- **PromptLoader**: 프롬프트 템플릿 로딩
+- **RAGSystemInitializer / RAGQueryProcessor**: RAG 파이프라인 초기화 및 질의 처리
+- **QueryRouter**: 질의 라우팅
 
 ### 3. Streamlit WebUI (main.py)
-- 실시간 채팅 인터페이스
-- 대화 히스토리 관리
-- 문서 소스 표시
-- 설정 패널
+- 실시간 채팅 인터페이스 (제빵 테마 UI)
+- 대화 히스토리 관리 및 메모리 활용 질의응답
+- 답변 근거 문서(페이지/파일명) 표시
+- `config.yaml` 기반 설정 패널
 
 ### 4. 품질 평가 시스템 (evaluate.py)
 - **RAGAS 메트릭**: faithfulness, answer_relevancy, context_recall, answer_correctness
 - **데이터셋 기반 평가**: 사전 정의된 질문-답변 쌍 사용
 - **결과 저장**: JSON 형태로 평가 결과 저장
 - **Upstage API 호환**: baseline.py 방식으로 RAGAS 연동
+
+#### RAGAS 평가 지표 상세 설명
+
+**1. Faithfulness (신뢰성)**
+- **정의**: 생성된 답변이 제공된 컨텍스트(검색된 문서)에 얼마나 충실한지 측정
+- **점수 범위**: 0~1 (높을수록 좋음)
+- **의미**: 답변이 컨텍스트에서 벗어나지 않고 사실에 기반하여 생성되었는지 평가
+- **중요성**: RAG 시스템의 핵심 지표로, 환각(hallucination) 방지 정도를 나타냄
+
+**2. Answer Relevancy (답변 관련성)**
+- **정의**: 생성된 답변이 사용자 질문과 얼마나 관련성이 높은지 측정
+- **점수 범위**: 0~1 (높을수록 좋음)
+- **의미**: 답변이 질문을 정확히 이해하고 적절하게 응답했는지 평가
+- **중요성**: 사용자 의도 파악 및 답변 품질의 기본적인 측정 지표
+
+**3. Context Recall (컨텍스트 재현율)**
+- **정의**: 검색된 컨텍스트가 질문에 답하기 위해 필요한 모든 정보를 포함하고 있는지 측정
+- **점수 범위**: 0~1 (높을수록 좋음)
+- **의미**: 검색 시스템이 관련 문서를 얼마나 잘 찾아내는지 평가
+- **중요성**: 검색 품질과 답변 완성도에 직접적인 영향을 미치는 지표
+
+**4. Answer Correctness (답변 정확성)**
+- **정의**: 생성된 답변이 정답과 얼마나 일치하는지 측정
+- **점수 범위**: 0~1 (높을수록 좋음)
+- **의미**: 사전 정의된 정답과 비교하여 답변의 정확성을 평가
+- **중요성**: RAG 시스템의 전반적인 성능을 종합적으로 평가하는 지표
+
+**평가 프로세스**
+1. **데이터셋 준비**: `data/eval/question_dataset.json`에 질문-정답 쌍 정의
+2. **RAG 시스템 실행**: 각 질문에 대해 답변 생성
+3. **RAGAS 메트릭 계산**: 4개 지표에 대한 점수 산출
+4. **결과 분석**: `data/eval/evaluation_results/`에 JSON 형태로 저장
+5. **성능 개선**: 낮은 점수 지표를 중심으로 시스템 최적화
 
 ### 5. 테스트 시스템 (tests/)
 - **pytest 기반**: 모든 주요 컴포넌트 테스트
@@ -150,19 +195,19 @@ uv add 패키지명
 
 ```mermaid
 flowchart TD
-    A[PDF 문서] --> B[PyMuPDF 로더]
+    A[제과제빵 PDF 자료] --> B[PyMuPDF 로더]
     B --> C[텍스트 분할<br/>RecursiveCharacterTextSplitter<br/>chunk_size: 1000, overlap: 50]
-    C --> D[Upstage Embeddings<br/>embedding-query 모델]
-    D --> E[FAISS 벡터 저장소<br/>벡터 인덱스 구축]
+    C --> D[Upstage Embeddings<br/>embedding-query]
+    D --> E[FAISS 벡터 저장소]
     
-    F[사용자 질문] --> G[질문 임베딩<br/>Upstage Embeddings]
+    F[사용자 질문(제과제빵)] --> G[질문 임베딩<br/>Upstage Embeddings]
     G --> H[유사도 검색<br/>FAISS Retriever]
     E --> H
     H --> I[관련 문서 검색<br/>Top-K 문서 반환]
     
     I --> J[프롬프트 템플릿<br/>질문 + 컨텍스트]
-    J --> K[Upstage Chat API<br/>답변 생성]
-    K --> L[한국어 답변 출력]
+    J --> K[Upstage Chat API (solar-pro2)<br/>답변 생성]
+    K --> L[한국어 답변 + 출처]
     
     style A fill:#e1f5fe
     style F fill:#e8f5e8

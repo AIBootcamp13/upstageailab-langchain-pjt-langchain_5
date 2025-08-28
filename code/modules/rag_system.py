@@ -23,6 +23,7 @@ from .sql import SQLManager
 from .chat_history import ChatHistoryManager
 from .logger import LoggerManager
 from .config_loader import get_config_loader
+from .router import QueryRouter
 
 
 class RAGSystemInitializer:
@@ -51,27 +52,49 @@ class RAGSystemInitializer:
         return str(project_root), pdf_dir, vectorstore_dir
     
     @staticmethod
-    def initialize_embeddings(use_config: bool = True) -> UpstageEmbeddings:
+    def initialize_embeddings(use_config: bool = True):
         """
         임베딩 모델 초기화 (config 기반)
         
         Args:
             use_config (bool): config.yaml 사용 여부
         """
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        
+        logger = LoggerManager("RAGSystem")
+        
         if use_config:
             try:
                 config_loader = get_config_loader()
                 embeddings_config = config_loader.get_embeddings_config()
-                model = embeddings_config.get("model", "embedding-query")
-            except Exception:
-                model = "embedding-query"
+                provider = embeddings_config.get("provider", "upstage")
+                model_name = embeddings_config.get("model")
+            except Exception as e:
+                logger.log_warning("임베딩 설정 로드 실패, Upstage 기본값 사용", str(e))
+                provider = "upstage"
+                model_name = "embedding-query"
         else:
-            model = "embedding-query"
-        
-        return UpstageEmbeddings(
-            api_key=os.getenv("UPSTAGE_API_KEY"),
-            model=model
-        )
+            provider = "upstage"
+            model_name = "embedding-query"
+
+        logger.log_step("임베딩 모델 초기화", f"Provider: {provider}, Model: {model_name}")
+
+        if provider == "google":
+            if not os.getenv("GOOGLE_API_KEY"):
+                raise ValueError("임베딩에 google provider를 사용하려면 GOOGLE_API_KEY가 필요합니다.")
+            return GoogleGenerativeAIEmbeddings(
+                model=model_name,
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
+        elif provider == "upstage":
+            if not os.getenv("UPSTAGE_API_KEY"):
+                raise ValueError("임베딩에 upstage provider를 사용하려면 UPSTAGE_API_KEY가 필요합니다.")
+            return UpstageEmbeddings(
+                api_key=os.getenv("UPSTAGE_API_KEY"),
+                model=model_name
+            )
+        else:
+            raise ValueError(f"지원하지 않는 임베딩 provider입니다: {provider}")
     
     @staticmethod
     def initialize_vector_manager(pdf_dir: str, vectorstore_dir: str, 
@@ -97,19 +120,23 @@ class RAGSystemInitializer:
                 
                 chunk_size = vectorstore_config.get("chunk_size", chunk_size or 1000)
                 chunk_overlap = vectorstore_config.get("chunk_overlap", chunk_overlap or 50)
+                include_filename_in_chunk = vectorstore_config.get("include_filename_in_chunk", True)
             except Exception:
                 chunk_size = chunk_size or 1000
                 chunk_overlap = chunk_overlap or 50
+                include_filename_in_chunk = True
         else:
             chunk_size = chunk_size or 1000
             chunk_overlap = chunk_overlap or 50
+            include_filename_in_chunk = True
         
         return VectorStoreManager(
             pdf_dir=pdf_dir,
             vectorstore_dir=vectorstore_dir, 
             embeddings=embeddings,
             chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
+            chunk_overlap=chunk_overlap,
+            include_filename_in_chunk=include_filename_in_chunk
         )
     
     @classmethod
@@ -174,9 +201,19 @@ class RAGSystemInitializer:
             logger.log_step("검색기 관리자 초기화 완료")
             
             # 7. RAG 질의 처리기 초기화
+            # 라우터 초기화
+            router = None
+            try:
+                router = QueryRouter(use_config=use_config)
+                logger.log_step("라우터 초기화", "QueryRouter 생성 완료")
+            except Exception as e:
+                logger.log_warning("라우터 초기화 실패", str(e))
+            
+            # RAGQueryProcessor 생성 (라우터 포함)
             query_processor = RAGQueryProcessor(
                 llm_manager=llm_manager, 
                 retriever_manager=retriever_manager, 
+                router=router,  # 라우터 주입
                 logger_name=logger_name + "_Query",
                 db_save=enable_db_memory,
                 project_root=str(project_root) if enable_db_memory else None
@@ -203,10 +240,12 @@ class RAGSystemInitializer:
 
 
 class RAGQueryProcessor:
-    """RAG 질의 처리 공통 클래스"""
+    """통합 질의 처리 클래스 (라우팅 + RAG/일반 + 메모리)"""
     
     def __init__(self, llm_manager: LLMManager, retriever_manager: RetrieverManager,
-                 logger_name: str = "RAGQueryProcessor", db_save: bool = False,
+                 router: QueryRouter = None,  # 라우터 추가
+                 logger_name: str = "RAGQueryProcessor", 
+                 db_save: bool = False,
                  project_root: str = None):
         """
         RAGQueryProcessor 초기화
@@ -214,35 +253,180 @@ class RAGQueryProcessor:
         Args:
             llm_manager: LLM 관리자
             retriever_manager: 검색기 관리자
+            router (QueryRouter, optional): 질문 라우터. None이면 기본적으로 RAG 사용
             logger_name: 로거 이름
             db_save: 데이터베이스 저장 여부
             project_root: 프로젝트 루트 경로 (db_save=True일 때 필요)
         """
         self.llm_manager = llm_manager
         self.retriever_manager = retriever_manager
+        self.router = router  # 라우터 추가
         self.logger = LoggerManager(logger_name)
         self.db_save = db_save
         
         # 메모리 관리자 초기화
-        if db_save and project_root:
+        self._init_memory_manager(project_root)
+    
+    def unified_query(self, question: str, chat_history_manager: ChatHistoryManager = None,
+                     auto_save: bool = True, return_sources: bool = False) -> Dict[str, Any]:
+        """
+        라우팅 + 분기 처리 + 메모리 저장을 통합한 질의 처리
+        
+        Args:
+            question (str): 사용자 질문
+            chat_history_manager (ChatHistoryManager, optional): 채팅 히스토리 관리자
+            auto_save (bool): 메모리에 자동 저장 여부
+            return_sources (bool): 소스 정보 반환 여부
+            
+        Returns:
+            Dict[str, Any]: {
+                "response": str,
+                "success": bool,
+                "error": Optional[str],
+                "processing_type": str ("RAG" or "GENERAL"),
+                "sources": List[str] (if return_sources=True),
+                "documents": List[Document] (if return_sources=True),
+                "routing_info": Dict (라우팅 결과 정보)
+            }
+        """
+        self.logger.log_function_start("unified_query", 
+                                     question=question[:50] + "..." if len(question) > 50 else question)
+        
+        try:
+            # 1. 라우팅 (라우터가 있는 경우)
+            if self.router:
+                routing_result = self.router.route(question)
+                use_rag = routing_result["use_rag"]
+                self.logger.log_step("라우팅 완료", f"타입: {routing_result['type']}")
+            else:
+                # 라우터가 없으면 기본적으로 RAG 사용
+                use_rag = True
+                routing_result = {"type": "RAG", "use_rag": True, "confidence": 1.0}
+                self.logger.log_step("라우터 없음", "기본 RAG 모드 사용")
+            
+            # 2. 분기 처리 및 응답 생성
+            if use_rag:
+                result = self._process_rag_query(question, chat_history_manager, return_sources)
+            else:
+                result = self._process_general_query(question, chat_history_manager)
+            
+            # 3. 메모리에 저장 (선택사항)
+            if auto_save and chat_history_manager:
+                self._save_to_memory(question, result, chat_history_manager)
+            
+            # 4. 라우팅 정보 추가
+            result["routing_info"] = routing_result
+            
+            self.logger.log_function_end("unified_query", f"처리 완료: {result['processing_type']}")
+            return result
+            
+        except Exception as e:
+            self.logger.log_error("unified_query", e)
+            return {
+                "response": f"질의 처리 중 오류가 발생했습니다: {str(e)}",
+                "success": False,
+                "error": str(e),
+                "processing_type": "ERROR",
+                "routing_info": {"type": "ERROR", "use_rag": False, "confidence": 0.0}
+            }
+    
+    def _process_rag_query(self, question: str, chat_history_manager: ChatHistoryManager = None,
+                          return_sources: bool = False) -> Dict[str, Any]:
+        """RAG 질의 처리 (기존 process_query와 동일)"""
+        return self.process_query(question, chat_history_manager, return_sources)
+    
+    def _process_general_query(self, question: str, chat_history_manager: ChatHistoryManager = None) -> Dict[str, Any]:
+        """일반 질의 처리"""
+        self.logger.log_function_start("_process_general_query", 
+                                     question=question[:50] + "..." if len(question) > 50 else question)
+        
+        try:
+            # 채팅 히스토리 가져오기
+            chat_history = []
+            if chat_history_manager:
+                chat_history = chat_history_manager.get_chat_history_as_dicts()
+                self.logger.log_step("채팅 히스토리 로드", f"{len(chat_history)}개 메시지")
+            
+            # 일반답변용 LLM 응답 생성
+            response = self.llm_manager.generate_general_response(
+                question=question,
+                chat_history=chat_history
+            )
+            
+            self.logger.log_step("일반답변 생성 완료")
+            
+            result = {
+                "response": response,
+                "success": True,
+                "error": None,
+                "processing_type": "GENERAL",
+                "sources": [],
+                "documents": []
+            }
+            
+            self.logger.log_function_end("_process_general_query", "일반답변 처리 완료")
+            return result
+            
+        except Exception as e:
+            self.logger.log_error("_process_general_query", e)
+            return {
+                "response": f"일반답변 생성 중 오류가 발생했습니다: {str(e)}",
+                "success": False,
+                "error": str(e),
+                "processing_type": "ERROR"
+            }
+    
+    def _save_to_memory(self, question: str, result: Dict[str, Any], 
+                        chat_history_manager: ChatHistoryManager):
+        """메모리에 대화 저장"""
+        try:
+            if result["success"]:
+                sources = result.get("sources", [])
+                chat_history_manager.add_user_message(question)
+                chat_history_manager.add_ai_message(result["response"], question, sources)
+                self.logger.log_step("대화 기록 저장 완료")
+        except Exception as e:
+            self.logger.log_warning("대화 기록 저장 실패", str(e))
+    
+    def _init_memory_manager(self, project_root: str = None):
+        """메모리 관리자 초기화"""
+        if self.db_save and project_root:
             # 데이터베이스 기반 메모리 (WebUI용)
             from .sql import SQLManager
             db_path = str(Path(project_root) / "data" / "chat.db")
             sql_manager = SQLManager(db_path=db_path)
+            # 설정에서 메모리 윈도우 크기를 불러와 주입
+            try:
+                config_loader = get_config_loader()
+                db_conf = config_loader.get_database_config()
+                memory_k = db_conf.get("memory_window", 3)
+            except Exception:
+                memory_k = 3
+
             self.chat_history = ChatHistoryManager(
                 sql_manager=sql_manager,
-                auto_save=True
+                auto_save=True,
+                memory_k=memory_k
             )
         else:
-            # 메모리 기반만 (CLI용)
+            # CLI/평가용: 메모리 기반만 사용 (세션별 관리 없음)
+            # 설정에서 메모리 윈도우 크기를 불러와 주입
+            try:
+                config_loader = get_config_loader()
+                db_conf = config_loader.get_database_config()
+                memory_k = db_conf.get("memory_window", 3)
+            except Exception:
+                memory_k = 3
+
             self.chat_history = ChatHistoryManager(
                 sql_manager=None,
-                auto_save=False
+                auto_save=False,
+                memory_k=memory_k
             )
     
     def query(self, question: str, return_sources: bool = False) -> Dict[str, Any]:
         """
-        자동 메모리 기능이 포함된 간단한 질의 처리
+        자동 메모리 기능이 포함된 간단한 질의 처리 (기존 호환성 유지)
         
         Args:
             question (str): 사용자 질문
@@ -308,7 +492,8 @@ class RAGQueryProcessor:
             result = {
                 "response": response,
                 "success": True,
-                "error": None
+                "error": None,
+                "processing_type": "RAG"  # RAG 처리 타입 추가
             }
             
             # 5. 소스 정보 추가 (선택사항)
@@ -326,7 +511,8 @@ class RAGQueryProcessor:
             return {
                 "response": f"질의 처리 중 오류가 발생했습니다: {str(e)}",
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "processing_type": "ERROR"  # 에러 처리 타입 추가
             }
     
     def process_query_with_memory(self,

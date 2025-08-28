@@ -78,9 +78,20 @@ def unzip_in_place_with_name_fix(folder: str, delete_zip: bool = False):
         os.makedirs(extract_root, exist_ok=True)
 
         with zipfile.ZipFile(zip_path, "r") as zf:
+            zip_basename = os.path.splitext(name)[0]
             for info in zf.infolist():
                 # 원래 상대경로(슬래시 포함) 복구
-                fixed_rel = fix_zip_internal_name(info.filename).replace("\\", "/")
+                fixed_rel = fix_zip_internal_name(info.filename).replace("\\\\", "/") # Fix: Escape backslash for literal interpretation
+
+                # 압축 파일 내의 최상위 폴더명이 압축 파일명과 같을 경우, 해당 폴더 경로를 제거합니다.
+                prefix_to_strip = zip_basename + "/"
+                if fixed_rel.startswith(prefix_to_strip):
+                    fixed_rel = fixed_rel[len(prefix_to_strip):]
+
+                # 경로가 비어있다면(예: 최상위 폴더 자체), 건너뜁니다.
+                if not fixed_rel:
+                    continue
+
                 target_path = os.path.join(extract_root, fixed_rel)
 
                 if info.is_dir() or fixed_rel.endswith("/"):
@@ -104,6 +115,7 @@ def unzip_in_place_with_name_fix(folder: str, delete_zip: bool = False):
                 print(f"Deleted zip: {zip_path}")
             except Exception as e:
                 print(f"Failed to delete zip ({zip_path}): {e}")
+
 
 # ───────── 이미 풀어둔 폴더의 파일명 사후 복구(선택) ─────────
 def rename_mojibake_in_dir(root_dir: str):
@@ -131,6 +143,39 @@ def rename_mojibake_in_dir(root_dir: str):
                     os.rename(src, dst)
                     print(f"Renamed dir: {dn} -> {fixed}")
 
+# ───────── PDF 파일 정리 ─────────
+def organize_pdf_files(root_folder: str):
+    """
+    PDF 파일 중 '변경'이라는 단어가 포함된 파일을 '변경사항' 폴더로 이동합니다.
+    """
+    change_folder = os.path.join(root_folder, "변경사항")
+    os.makedirs(change_folder, exist_ok=True)
+
+    for cur_root, dirs, files in os.walk(root_folder):
+        # '변경사항' 폴더 자체는 처리하지 않도록 제외
+        if cur_root == change_folder:
+            continue
+        # 재귀적으로 '변경사항' 폴더로 들어가지 않도록 dirs에서 제거
+        if "변경사항" in dirs:
+            dirs.remove("변경사항")
+
+        for file_name in files:
+            # PDF 파일이고 파일명에 '변경'이 포함되어 있는지 확인
+            if file_name.lower().endswith(".pdf") and "변경" in file_name:
+                src_path = os.path.join(cur_root, file_name)
+                dst_path = os.path.join(change_folder, file_name)
+                
+                # 대상 폴더에 동일한 파일명이 이미 존재할 경우, 파일명 충돌 방지
+                base, ext = os.path.splitext(file_name)
+                counter = 1
+                while os.path.exists(dst_path):
+                    dst_path = os.path.join(change_folder, f"{base} ({counter}){ext}")
+                    counter += 1
+
+                shutil.move(src_path, dst_path)
+                print(f"Moved '{file_name}' to '{change_folder}'")
+
+
 if __name__ == "__main__":
     # 스크립트의 디렉토리로 작업 디렉토리 변경
     import os
@@ -153,6 +198,9 @@ if __name__ == "__main__":
     # 2) 해당 폴더 안 zip만 해제 (내부 파일명 복구 포함)
     unzip_in_place_with_name_fix(folder=target_folder, delete_zip=True)
 
-    # 3) 이미 풀어둔 폴더에서 이름이 깨져있다면(과거 작업물) 아래 한 줄로 복구 가능
+    # 3) PDF 파일 정리 (파일명에 '변경' 포함 시 '변경사항' 폴더로 이동)
+    organize_pdf_files(target_folder)
+
+    # 4) 이미 풀어둔 폴더에서 이름이 깨져있다면(과거 작업물) 아래 한 줄로 복구 가능
     # rename_mojibake_in_dir(os.path.join(target_folder, "제과기능사 과제(pdf)"))
     # rename_mojibake_in_dir(os.path.join(target_folder, "제빵기능사 과제(pdf)"))

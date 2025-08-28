@@ -23,7 +23,6 @@ from .vector_store import VectorStoreManager
 from .llm import LLMManager
 from .retriever import RetrieverManager
 from .chat_history import ChatHistoryManager
-from .crawler import CrawlerManager
 from .router import QueryRouter
 from .rag_system import RAGSystemInitializer, RAGQueryProcessor
 from .prompt_loader import PromptLoader, get_prompt_loader
@@ -36,7 +35,6 @@ __all__ = [
     "LLMManager",
     "RetrieverManager",
     "ChatHistoryManager",
-    "CrawlerManager",
     "QueryRouter",
     "RAGSystemInitializer", 
     "RAGQueryProcessor",

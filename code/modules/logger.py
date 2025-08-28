@@ -178,6 +178,11 @@ class LoggerManager:
         """오류 로그 (아이콘 포함)"""
         self.error(f"❌ {message}")
     
+    # 하위 호환: 일부 모듈에서 log_warning 이름을 호출할 수 있음
+    def log_warning(self, *args):
+        """경고 로그 (하위 호환용, 가변 인자 지원)"""
+        self.warning(*args)
+    
     @staticmethod
     def get_global_logger():
         """전역 로거 반환 (기존 호환성)"""

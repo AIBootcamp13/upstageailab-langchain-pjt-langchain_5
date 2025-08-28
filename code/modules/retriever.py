@@ -126,6 +126,10 @@ class RetrieverManager:
                                      query=query[:50] + "..." if len(query) > 50 else query)
         
         try:
+            # 임베딩 모델명 로그 출력 (검색 시 임베딩 API 호출됨)
+            if hasattr(self.vectorstore, 'embedding_function') and hasattr(self.vectorstore.embedding_function, 'model'):
+                embedding_model = self.vectorstore.embedding_function.model
+                self.logger.log_step("임베딩 API 호출", f"모델: {embedding_model}")
             documents = self.retriever.invoke(query)
             self.logger.log_function_end("search_documents", 
                                        f"{len(documents)}개 문서 검색")
@@ -155,6 +159,10 @@ class RetrieverManager:
                                      k=search_k)
         
         try:
+            # 임베딩 모델명 로그 출력 (검색 시 임베딩 API 호출됨)
+            if hasattr(self.vectorstore, 'embedding_function') and hasattr(self.vectorstore.embedding_function, 'model'):
+                embedding_model = self.vectorstore.embedding_function.model
+                self.logger.log_step("임베딩 API 호출", f"모델: {embedding_model}")
             results = self.vectorstore.similarity_search_with_score(query, k=search_k)
             self.logger.log_function_end("search_with_scores", 
                                        f"{len(results)}개 문서 검색 (점수 포함)")

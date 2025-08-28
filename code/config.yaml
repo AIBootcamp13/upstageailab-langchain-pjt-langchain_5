@@ -1,26 +1,39 @@
 # RAG 시스템 설정 파일
 # 이 파일을 수정하여 모델, 검색 파라미터 등을 조정할 수 있습니다.
+# 사용 가능한 provider: "upstage", "google"
+# 사용 가능한 llm model:
+# - upstage : solar-pro2, upstage/solar-1-mini-chat
+# - google : gemini-2.5-flash, gemini-2.5-lite, gemini-2.0-flash, gemma-3-27b-it
+# 사용 가능한 embedding model:
+# - upstage : embedding-query
+# - google : gemini-embedding-001, text-multilingual-embedding-002, text-embedding-004(영어전용)
 
 # LLM 설정
 llm:
-  main_model: "solar-pro2"       # LLM 메인 모델 (solar-pro2, solar-1-pro, etc.)
-  reasoning_effort: "high"       # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
-  temperature: 0.7               # 응답 다양성 조절 (0.0~1.0)
-  
-# 라우터 설정 (질문 라우팅용)
-router:
-  # model: "upstage/solar-1-mini-chat"  # 라우터 모델 (경량 모델 권장)
-  main_model: "solar-pro2"       # 라우터 모델 (경량 모델 권장)
-  reasoning_effort: "low"        # reasoning여부. solar-pro2 모델에서만 사용 (high, low)
-  temperature: 0.1               # 라우팅 일관성 (낮을수록 일관됨)
+  router:
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.1        # temperature 0.0 ~ 1.0 : 낮을수록 답변이 확정적(정확성), 높을 수록 다양성(창의성)
+    reasoning_effort: "low" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
+  general:
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.7
+    reasoning_effort: "low" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
+  rag:
+    provider: "upstage"
+    model: "solar-pro2"
+    temperature: 0.7
+    reasoning_effort: "high" # Upstage solar-pro2 모델 전용 reasoning 여부 ("high", "low")
 
 # 임베딩 설정
 embeddings:
-  model: "embedding-query"       # 임베딩 모델
+  provider: "upstage"
+  model: "embedding-query"
 
 # Retriever 설정 (문서 검색)
 retriever:
-  search_type: "similarity"      # 검색 방법: similarity, mmr, similarity_score_threshold
+  search_type: "similarity"      # 검색 방법: "similarity", "mmr", "similarity_score_threshold"
   top_k: 5                       # 반환할 문서 수 (상위 k개)
   score_threshold: 0.8           # similarity_score_threshold일 때 최소 점수
   
@@ -28,12 +41,13 @@ retriever:
 vectorstore:
   chunk_size: 1000               # 문서 청크 크기
   chunk_overlap: 50              # 청크 간 겹치는 부분
+  include_filename_in_chunk: true # 청크 내용 앞에 파일명 포함 여부
 
 # 시스템 로그 설정
 logging:
-  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"                  # 로그 레벨: "DEBUG", "INFO", "WARNING", "ERROR"
   
 # 데이터베이스 설정
 database:
-  enable_memory: false           # 대화 메모리 기능 활성화
   conversation_limit: 20         # 사이드바에 표시할 대화 수
+  memory_window: 3               # 최근 대화 메모리 창 크기 (대화 쌍 기준)

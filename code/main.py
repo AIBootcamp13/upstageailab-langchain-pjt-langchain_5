@@ -30,6 +30,7 @@ from modules import (
     LLMManager, RetrieverManager, ChatHistoryManager,
     QueryRouter, RAGSystemInitializer, RAGQueryProcessor
 )
+from modules.config_loader import get_config_loader
 
 # 환경변수 로드 (스크립트 디렉토리 기준)
 load_dotenv(script_dir / '.env')
@@ -293,20 +294,16 @@ def initialize_system():
         current_file_path=script_dir,
         include_sql=True,
         use_config=True,  # config.yaml 사용
-        logger_name="StreamlitRAG"
+        logger_name="StreamlitRAG",
+        enable_db_memory=False  # WebUI에서는 개별 세션별로 ChatHistoryManager 관리
     )
     
     if result is None:
         st.error("시스템 초기화에 실패했습니다.")
         return None, None, None, None, None, None
     
-    # 라우터 초기화 (config 기반)
-    try:
-        router = QueryRouter(use_config=True)
-        return result + (router,)
-    except Exception as e:
-        st.error(f"라우터 초기화에 실패했습니다: {str(e)}")
-        return None, None, None, None, None, None
+    # 라우터는 RAGQueryProcessor 내부에 포함됨
+    return result
 
 
 def initialize_session_state():
@@ -330,10 +327,18 @@ def create_new_conversation(sql_manager):
         # 새 세션 생성
         session_id = sql_manager.create_conversation()
         
-        # 채팅 히스토리 관리자 초기화
+        # 채팅 히스토리 관리자 초기화 (설정의 memory_window 적용)
+        try:
+            config_loader = get_config_loader()
+            db_conf = config_loader.get_database_config()
+            memory_k = db_conf.get("memory_window", 3)
+        except Exception:
+            memory_k = 3
+
         chat_manager = ChatHistoryManager(
             session_id=session_id,
-            sql_manager=sql_manager
+            sql_manager=sql_manager,
+            memory_k=memory_k
         )
         
         # 세션 상태 업데이트
@@ -351,10 +356,18 @@ def create_new_conversation(sql_manager):
 def load_conversation(session_id, sql_manager):
     """기존 대화 로드"""
     try:
-        # 채팅 히스토리 관리자 초기화
+        # 채팅 히스토리 관리자 초기화 (설정의 memory_window 적용)
+        try:
+            config_loader = get_config_loader()
+            db_conf = config_loader.get_database_config()
+            memory_k = db_conf.get("memory_window", 3)
+        except Exception:
+            memory_k = 3
+
         chat_manager = ChatHistoryManager(
             session_id=session_id,
-            sql_manager=sql_manager
+            sql_manager=sql_manager,
+            memory_k=memory_k
         )
         
         # 전체 대화 기록 가져오기
@@ -506,7 +519,7 @@ def render_sidebar(sql_manager):
                 st.write(f"**메모리 메시지:** {summary.get('memory_messages', 0)}개")
 
 
-def render_chat_interface(llm_manager, retriever_manager, router):
+def render_chat_interface(query_processor):
     """채팅 인터페이스 렌더링"""
     st.header("🍞 제과제빵 상담 어시스턴트")
     
@@ -552,48 +565,22 @@ def render_chat_interface(llm_manager, retriever_manager, router):
     user_input = st.chat_input("제빵에 관한 질문을 입력하세요...")
     
     if user_input and st.session_state.chat_history_manager:
-        # 사용자 메시지 추가
-        st.session_state.chat_history_manager.add_user_message(user_input)
-        
-        # 라우팅 수행
+        # 통합 질의 처리 (라우팅 + 분기 + 메모리)
         with st.spinner("질문을 분석하고 답변을 준비하는 중..."):
             try:
-                # 질문 라우팅
-                routing_result = router.route(user_input)
+                result = query_processor.unified_query(
+                    question=user_input,
+                    chat_history_manager=st.session_state.chat_history_manager,
+                    auto_save=True,
+                    return_sources=True
+                )
                 
-                if routing_result["use_rag"]:
-                    # 제빵 관련 질문 - RAG 시스템 사용
-                    # 문서 검색
-                    documents = retriever_manager.search_documents(user_input)
-                    context = retriever_manager.format_documents_for_context(documents)
-                    
-                    # 채팅 히스토리 가져오기
-                    chat_history = st.session_state.chat_history_manager.get_chat_history_as_dicts()
-                    
-                    # LLM 응답 생성 (solar-pro2 모델 사용)
-                    response = llm_manager.generate_response(
-                        question=user_input,
-                        context=context,
-                        chat_history=chat_history
-                    )
-                    
-                    # 소스 정보 추출
-                    sources = retriever_manager.get_unique_sources(documents) if documents else []
-                    
-                    # AI 메시지 추가 (소스 정보 포함)
-                    st.session_state.chat_history_manager.add_ai_message(response, user_input, sources)
-                    
+                if result["success"]:
+                    # UI 메시지 리스트 업데이트
+                    st.session_state.messages = st.session_state.chat_history_manager.get_full_conversation_history()
+                    st.rerun()
                 else:
-                    # 일반 질문 - 라우터가 이미 생성한 답변 사용
-                    response = routing_result["response"]
-                    
-                    # AI 메시지 추가 (소스 정보 없이)
-                    st.session_state.chat_history_manager.add_ai_message(response, user_input, [])
-                
-                # UI 메시지 리스트 업데이트
-                st.session_state.messages = st.session_state.chat_history_manager.get_full_conversation_history()
-                
-                st.rerun()
+                    st.error(f"답변 생성 오류: {result.get('error', '알 수 없는 오류')}")
                 
             except Exception as e:
                 st.error(f"답변 생성 오류: {str(e)}")
@@ -609,11 +596,11 @@ def main():
     if not result:
         return
     
-    vector_manager, llm_manager, retriever_manager, sql_manager, query_processor, router = result
+    vector_manager, llm_manager, retriever_manager, sql_manager, query_processor = result
     
     # UI 렌더링
     render_sidebar(sql_manager)
-    render_chat_interface(llm_manager, retriever_manager, router)
+    render_chat_interface(query_processor)
 
 
 if __name__ == "__main__":

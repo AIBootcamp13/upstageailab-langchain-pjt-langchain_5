@@ -71,13 +71,19 @@ class ConfigLoader:
         """기본 설정값 반환"""
         return {
             "llm": {
-                "main_model": "solar-pro2",
-                "reasoning_effort": "high",
-                "temperature": 0.7
-            },
-            "router": {
-                "model": "upstage/solar-1-mini-chat",
-                "temperature": 0.1
+                "router": {
+                    "model": "solar-pro2",
+                    "temperature": 0.1
+                },
+                "general": {
+                    "model": "solar-pro2",
+                    "temperature": 0.7
+                },
+                "rag": {
+                    "model": "solar-pro2",
+                    "temperature": 0.7,
+                    "reasoning_effort": "high"
+                }
             },
             "embeddings": {
                 "model": "embedding-query"
@@ -89,14 +95,15 @@ class ConfigLoader:
             },
             "vectorstore": {
                 "chunk_size": 1000,
-                "chunk_overlap": 50
+                "chunk_overlap": 50,
+                "include_filename_in_chunk": True
             },
             "logging": {
                 "level": "INFO"
             },
             "database": {
-                "enable_memory": False,
-                "conversation_limit": 20
+                "conversation_limit": 20,
+                "memory_window": 3
             }
         }
     
@@ -120,12 +127,18 @@ class ConfigLoader:
     
     def _validate_specific_rules(self):
         """특정 검증 규칙 적용"""
-        # temperature 범위 검증
-        for section in ["llm", "router"]:
-            temp = self._config[section].get("temperature", 0.7)
-            if not (0.0 <= temp <= 1.0):
-                self.logger.log_warning_with_icon(f"temperature 값 범위 초과, 기본값으로 설정: {section}.temperature = {temp}")
-                self._config[section]["temperature"] = 0.7 if section == "llm" else 0.1
+        # LLM 설정의 temperature 범위 검증 (새로운 구조)
+        if "llm" in self._config:
+            llm_config = self._config["llm"]
+            for sub_section in ["router", "general", "rag"]:
+                if sub_section in llm_config:
+                    temp = llm_config[sub_section].get("temperature", 0.7)
+                    if not (0.0 <= temp <= 1.0):
+                        self.logger.log_warning_with_icon(f"temperature 값 범위 초과, 기본값으로 설정: llm.{sub_section}.temperature = {temp}")
+                        if sub_section == "router":
+                            llm_config[sub_section]["temperature"] = 0.1
+                        else:
+                            llm_config[sub_section]["temperature"] = 0.7
         
         # top_k 양수 검증
         top_k = self._config["retriever"].get("top_k", 5)
@@ -138,6 +151,14 @@ class ConfigLoader:
         if not isinstance(chunk_size, int) or chunk_size < 100:
             self.logger.log_warning_with_icon(f"chunk_size 값이 유효하지 않음, 기본값으로 설정: chunk_size = {chunk_size}")
             self._config["vectorstore"]["chunk_size"] = 1000
+
+        # database.memory_window 양수 검증
+        memory_window = self._config["database"].get("memory_window", 3)
+        if not isinstance(memory_window, int) or memory_window < 1:
+            self.logger.log_warning_with_icon(
+                f"memory_window 값이 유효하지 않음, 기본값으로 설정: memory_window = {memory_window}"
+            )
+            self._config["database"]["memory_window"] = 3
     
     def get_config(self, section: str = None, key: str = None) -> Any:
         """
@@ -168,30 +189,20 @@ class ConfigLoader:
     
     def get_llm_config(self) -> Dict[str, Any]:
         """
-        LLM 설정 반환 (solar-pro2 조건부 처리 포함)
+        LLM 설정 반환 (라우터, 일반, RAG 포함)
         
         Returns:
-            Dict[str, Any]: LLM 초기화에 필요한 설정
+            Dict[str, Any]: LLM 설정 딕셔너리
         """
-        llm_config = self.get_config("llm")
-        model = llm_config.get("main_model", "solar-pro2")
-        
-        # solar-pro2 모델인 경우에만 reasoning_effort 포함
-        if "solar-pro2" in model.lower():
-            result = {
-                "model": model,
-                "temperature": llm_config.get("temperature", 0.7),
-                "reasoning_effort": llm_config.get("reasoning_effort", "high")
-            }
-            self.logger.log_step("LLM 설정 (reasoning_effort 포함)", f"모델: {model}")
-        else:
-            result = {
-                "model": model,
-                "temperature": llm_config.get("temperature", 0.7)
-            }
-            self.logger.log_step("LLM 설정 (reasoning_effort 제외)", f"모델: {model}")
-        
-        return result
+        return self.get_config("llm")
+    
+    def get_router_config(self) -> Dict[str, Any]:
+        """라우터 설정 반환 (사용되지 않음, 호환성 위해 유지)"""
+        return self.get_config("llm", "router")
+
+    def get_embeddings_config(self) -> Dict[str, Any]:
+        """임베딩 설정 반환"""
+        return self.get_config("embeddings")
     
     def get_router_config(self) -> Dict[str, Any]:
         """라우터 설정 반환"""
@@ -218,14 +229,15 @@ class ConfigLoader:
         """벡터스토어 설정 반환"""
         return {
             "chunk_size": self.get_config("vectorstore", "chunk_size"),
-            "chunk_overlap": self.get_config("vectorstore", "chunk_overlap")
+            "chunk_overlap": self.get_config("vectorstore", "chunk_overlap"),
+            "include_filename_in_chunk": self.get_config("vectorstore", "include_filename_in_chunk")
         }
     
     def get_database_config(self) -> Dict[str, Any]:
         """데이터베이스 설정 반환"""
         return {
-            "enable_memory": self.get_config("database", "enable_memory"),
-            "conversation_limit": self.get_config("database", "conversation_limit")
+            "conversation_limit": self.get_config("database", "conversation_limit"),
+            "memory_window": self.get_config("database", "memory_window")
         }
     
     def update_config(self, section: str, key: str, value: Any):
@@ -263,13 +275,17 @@ class ConfigLoader:
         
         summary = f"""
 === RAG 시스템 설정 요약 ===
-LLM 모델: {llm_config['model']}
-LLM Temperature: {llm_config['temperature']}
-Reasoning Effort: {llm_config.get('reasoning_effort', '사용안함')}
-라우터 모델: {self.get_config('router', 'model')}
+라우터 모델: {llm_config['router']['model']}
+라우터 Temperature: {llm_config['router']['temperature']}
+일반답변 모델: {llm_config['general']['model']}
+일반답변 Temperature: {llm_config['general']['temperature']}
+RAG 모델: {llm_config['rag']['model']}
+RAG Temperature: {llm_config['rag']['temperature']}
+RAG Reasoning Effort: {llm_config['rag'].get('reasoning_effort', '사용안함')}
 검색 방법: {retriever_config['search_type']}
 상위 K개 문서: {retriever_config['k']}
 청크 크기: {self.get_config('vectorstore', 'chunk_size')}
+청크에 파일명 포함: {self.get_config('vectorstore', 'include_filename_in_chunk')}
 설정 파일: {self.config_path}
         """.strip()
         
