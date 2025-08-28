@@ -219,6 +219,13 @@ class LLMManager:
                 question=question
             )
             
+            # 최종 프롬프트를 로그에 출력
+            self.logger.log_step("최종 일반답변 프롬프트", f"프롬프트 길이: {len(str(formatted_prompt))}자")
+            self.logger.log_step("시스템 프롬프트", system_prompt)
+            if formatted_history:
+                self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
+            self.logger.log_step("사용자 질문", question)
+            
             # 일반답변용 LLM 호출
             self.logger.log_step("일반답변용 LLM 호출", f"모델: {self.llm_config['general']['model']}")
             response = self.general_llm.invoke(formatted_prompt)
@@ -287,6 +294,15 @@ class LLMManager:
                     chat_history=formatted_history,
                     question=question
                 )
+            
+            # 최종 프롬프트를 로그에 출력
+            self.logger.log_step("최종 RAG 프롬프트", f"프롬프트 길이: {len(str(formatted_prompt))}자")
+            self.logger.log_step("시스템 프롬프트", system_prompt)
+            if context:
+                self.logger.log_step("검색된 컨텍스트", f"컨텍스트 길이: {len(context)}자")
+            if formatted_history:
+                self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
+            self.logger.log_step("사용자 질문", question)
             
             # RAG용 LLM 호출
             self.logger.log_step("RAG용 LLM 호출", f"모델: {self.llm_config['rag']['model']}")
@@ -374,6 +390,15 @@ class LLMManager:
                     chat_history=formatted_history,
                     question=question
                 )
+            
+            # 최종 프롬프트를 로그에 출력
+            self.logger.log_step("최종 RAG 스트리밍 프롬프트", f"프롬프트 길이: {len(str(formatted_prompt))}자")
+            self.logger.log_step("시스템 프롬프트", system_prompt)
+            if context:
+                self.logger.log_step("검색된 컨텍스트", f"컨텍스트 길이: {len(context)}자")
+            if formatted_history:
+                self.logger.log_step("채팅 히스토리", f"{len(formatted_history)}개 메시지")
+            self.logger.log_step("사용자 질문", question)
             
             # 스트리밍 응답
             self.logger.log_step("RAG용 LLM 스트리밍 호출", f"모델: {self.llm_config['rag']['model']}")

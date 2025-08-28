@@ -107,6 +107,11 @@ class QueryRouter:
             # 프롬프트 포맷팅
             messages = classification_prompt.format_messages(question=question)
             
+            # 최종 프롬프트를 로그에 출력
+            self.logger.log_step("최종 라우팅 프롬프트", f"프롬프트 길이: {len(str(messages))}자")
+            self.logger.log_step("시스템 프롬프트", system_prompt)
+            self.logger.log_step("사용자 질문", question)
+            
             # LLM 호출
             self.logger.log_step("라우터용 LLM 호출", f"모델: {self.router_model}")
             response = self.router_llm.invoke(messages)
